@@ -91,8 +91,6 @@ structure Transformer where
   arguments : Array Expr
   -- Binders for arguments (binders.size = arguments.size)
   binders : Array BinderInfo
-  -- Metavariable to represent proof of P
-  assumptionVar : MVarId
   -- The assumption proposition P
   assumptionType : Expr
   -- | The result proposition Q
@@ -104,13 +102,12 @@ def mkTransformer (proof:Expr) (maxVars?:Option Nat): MetaM Transformer := do
   let (vars, binders, resultType) ← forallMetaTelescopeReducing (← inferType proof) maxVars?
   if vars.size = 0 then
     throwError m!"Expected predicate with at least one argument {indentExpr proof}."
-  let avar := vars.back
-  let some avarDecl ← (← getMCtx).findDecl? avar.mvarId!
-    | throwError "unknown goal {avar.mvarId!.name}"
+  let avar := vars.back.mvarId!
+  let some avarDecl ← (← getMCtx).findDecl? avar
+    | throwError "unknown goal {avar.name}"
   pure {
       arguments := vars.pop,
       binders := binders.pop,
-      assumptionVar := avar.mvarId!,
       assumptionType := avarDecl.type,
       resultType := resultType
     }
@@ -256,11 +253,11 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
     let s ← get
     let mexpr := mkIntLit m
     let aexpr := Poly.expr s.varExpr poly
-    let (poly, x_eq) ← appendAddExprFromInt m m_ne x poly
+    let (poly, x_pr) ← appendAddExprFromInt m m_ne x poly
     let bexpr := Poly.expr s.varExpr poly
-    let (poly, y_eq) ← appendAddExprFromInt m m_ne y poly
+    let (poly, y_pr) ← appendAddExprFromInt m m_ne y poly
     let cexpr := Poly.expr s.varExpr poly
-    let pr := mkAppN (mkConst ``add_poly_lemma) #[mexpr, x, y, aexpr, bexpr, cexpr]
+    let pr := mkAppN (mkConst ``add_poly_lemma) #[mexpr, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
     return (poly, pr)
 
   -- Match sub
@@ -273,11 +270,11 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
     let s ← get
     let mexpr := mkIntLit m
     let aexpr := Poly.expr s.varExpr poly
-    let (poly, x_eq) ← appendAddExprFromInt m m_ne x poly
+    let (poly, x_pr) ← appendAddExprFromInt m m_ne x poly
     let bexpr := Poly.expr s.varExpr poly
-    let (poly, y_eq) ← appendAddExprFromInt (- m) (neg_ne_zero m_ne) y poly
+    let (poly, y_pr) ← appendAddExprFromInt (- m) (neg_ne_zero m_ne) y poly
     let cexpr := Poly.expr s.varExpr poly
-    let pr := mkAppN (mkConst ``sub_poly_lemma) #[mexpr, x, y, aexpr, bexpr, cexpr]
+    let pr := mkAppN (mkConst ``sub_poly_lemma) #[mexpr, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
     return (poly, pr)
 
   -- Match negation
@@ -288,9 +285,9 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
     let s ← get
     let mexpr := mkIntLit m
     let aexpr := Poly.expr s.varExpr poly
-    let (poly, x_eq) ← appendAddExprFromInt (-m) (neg_ne_zero m_ne) x poly
+    let (poly, x_pr) ← appendAddExprFromInt (-m) (neg_ne_zero m_ne) x poly
     let bexpr := Poly.expr s.varExpr poly
-    let pr := mkAppN (mkConst ``neg_poly_lemma) #[mexpr, x, aexpr, bexpr]
+    let pr := mkAppN (mkConst ``neg_poly_lemma) #[mexpr, x, aexpr, bexpr, x_pr]
     return (poly, pr)
 
   -- Match scalar multiplication
@@ -490,57 +487,7 @@ def addAssertions (lctx:LocalContext) (s : State) : LocalContext := Id.run do
 
 -- Negating goal
 
--- | This negates the
--- proof expression is a tactic that given assumption var produces proof of false.
-def tryNegateGoal (tactic:Name) (goalId:MVarId) (target:Expr) (proofExpr:Expr) : ArithM (Option Goal) := do
-  -- Get variables and type of proof
-  let t ← mkTransformer proofExpr none
-  unless ← isDefEq t.resultType target do
-    return none
-  unless ← resolveTransformerArgs proofExpr t do
-    return none
-  -- Create free variable for representing assumption
-  let fvar := ← mkFreshFVarId
-  -- Get negated goal from assumption type
-  let prop ← parseNegatedGoal tactic goalId t.assumptionType
-  -- Pvar is a metavariable of type "prop -> False"
-  let assumptionProof ←
-        match ← extractPropPred (mkBVar 0) prop with
-        | none => do
-          throwError "Could not extract prop"
-        | some (proof, pred) => do
-          assertPred (Assertion.Origin.negGoal fvar) proof pred
-          pure proof
-  let s ← get
-  IO.println s! "negateGoal: {s.assertions.size} assertions."
-
-  -- Create verification
-  pure $ some {
-      onAddAssumptions := do
-        let lctx := addAssertions (← getLCtx) s
-        let falseExpr := mkConst ``False
-        withReader (fun ctx => { ctx with lctx := lctx }) do
-          IO.println s!"tryNegateGoal onAddAssumptions"
-          let tag   ← getMVarTag goalId
-          let goalProof ← mkFreshExprSyntheticOpaqueMVar falseExpr tag
---          assignExprMVar pvar (bindAssumption fvar prop proof)
-          IO.println s!"GoalRes pre:  {← instantiateMVars goalProof}"
-          let goalRes := goalProof -- .replaceFVar (mkFVar fvar) assumptionProof
-          IO.println s!"GoalRes post: {← instantiateMVars goalRes}"
-          assignExprMVar t.assumptionVar
-              (mkLambda `negGoal BinderInfo.default prop goalRes)
-          let goalIdProof := mkApp (mkAppN proofExpr t.arguments) (mkMVar t.assumptionVar)
-          IO.println s!"Goal {← instantiateMVars goalIdProof}"
-          assignExprMVar goalId goalIdProof
-          pure [goalProof.mvarId!]
-      onVerify := λgoalProof => do
-        -- Generate proof to pass into proof expr
-        let goalRes := goalProof.replaceFVar (mkFVar fvar) assumptionProof
-        assignExprMVar t.assumptionVar (mkLambda `negGoal BinderInfo.default prop goalRes)
-        assignExprMVar goalId (mkApp (mkAppN proofExpr t.arguments) (mkMVar t.assumptionVar))
-      }
-
-theorem decidable_by_contra {P:Prop} [h:Decidable P] (q : ¬ P → False) : P :=
+theorem decidable_by_contra {P:Prop} [h:Decidable P] (q : ∀(ng:¬ P), False) : P :=
   match h with
   | isFalse h => False.elim (q h)
   | isTrue h => h
@@ -583,13 +530,52 @@ def negateArithGoal (tactic:Name) (goalId:MVarId) : ArithM Goal := do
           -- Generate proof to pass into proof expr
           assignExprMVar goalId <| bindAssumption fvar atp proof
         }
-  let proofExpr := mkConst ``decidable_by_contra
+
+  let decideByContraExpr := mkConst ``decidable_by_contra
   let target := md.type
-  match ← tryNegateGoal tactic goalId md.type proofExpr with
-  | none =>
-    throwTacticEx tactic goalId m!"Unexpected goal tactic type{indentExpr md.type}"
-  | some goal =>
-    return goal
+  -- Get variables and type of proof
+  let t ← mkTransformer decideByContraExpr none
+  unless ← isDefEq t.resultType target do
+    throwTacticEx tactic goalId m!"Goal must be a proposition."
+  unless ← resolveTransformerArgs decideByContraExpr t do
+    throwTacticEx tactic goalId m!"Unexpected decidable "
+  let decideByContraExpr := mkAppN decideByContraExpr t.arguments
+  -- Get negated goal from assumption type
+  let prop ← parseNegatedGoal tactic goalId t.assumptionType
+  -- Create free variable for representing assumption
+  let fvar := ← mkFreshFVarId
+  -- Pvar is a metavariable of type "prop -> False"
+  let assumptionProof ←
+        match ← extractPropPred (mkBVar 0) prop with
+        | none => do
+          throwError "Could not extract prop"
+        | some (proof, pred) => do
+          assertPred (Assertion.Origin.negGoal fvar) proof pred
+          pure proof
+  let s ← get
+
+  -- Create verification
+  pure $ {
+      onAddAssumptions := do
+        let lctx := addAssertions (← getLCtx) s
+        let falseExpr := mkConst ``False
+        withReader (fun ctx => { ctx with lctx := lctx }) do
+          IO.println s!"tryNegateGoal onAddAssumptions"
+          let tag   ← getMVarTag goalId
+          let goalProof ← mkFreshExprSyntheticOpaqueMVar falseExpr tag
+          -- Make lambda that takes proof with the inferred type and produces false.
+          let goalLambda ← mkLambdaFVars #[mkFVar fvar] goalProof
+          -- Instantiate lambda with the proof we have
+          let goalRes := mkApp goalLambda assumptionProof
+          let contraArg := mkLambda Name.anonymous BinderInfo.default prop goalRes
+          assignExprMVar goalId $ mkApp decideByContraExpr contraArg
+          pure [goalProof.mvarId!]
+      onVerify := λgoalProof => do
+        -- Generate proof to pass into proof expr
+        let goalRes := goalProof.replaceFVar (mkFVar fvar) assumptionProof
+        let contraArg := mkLambda Name.anonymous BinderInfo.default prop goalRes
+        assignExprMVar goalId $ mkApp decideByContraExpr contraArg
+      }
 
 syntax (name := zify) "zify" : tactic
 
@@ -597,23 +583,18 @@ syntax (name := zify) "zify" : tactic
 
 @[tactic zify] def evalZify : Tactic := fun stx => do
   liftMetaTactic fun mvarId => do
-    let md ← getMVarDecl mvarId
     checkNotAssigned mvarId `zify
-    let some mvarDecl ← (← getMCtx).findDecl? mvarId
-      | throwError "unknown goal {mvarId.name}"
-    let (goal, s) ← (negateArithGoal `zify mvarId).run
+    let (goal, _) ← (negateArithGoal `zify mvarId).run
     let r@([goalId]) ← goal.onAddAssumptions
       | throwError "Expected more goals"
-    let some mvarDecl ← (← getMCtx).findDecl? goalId
-      | throwError "unknown goal {goalId.name}"
     pure r
 
 end ArithSolver
 
-/-
 -- (p : Int.NonNeg (Int.ofNat b - Int.ofNat a))
-def test_false_goal (a b : Nat) : False := by
+def test_false_goal (a b : Nat) (p:False) : False := by
   zify
+  exact p
 
 -- (p : Int.NonNeg (Int.ofNat b - Int.ofNat a))
 def test_nonneg_assumption (x y : Int) (p : Int.NonNeg (x + y)) : False := by
@@ -622,21 +603,17 @@ def test_nonneg_assumption (x y : Int) (p : Int.NonNeg (x + y)) : False := by
 -- (p : Int.NonNeg (Int.ofNat b - Int.ofNat a))
 def test_eq0_assumption (x : Int) (p : x = 0): False := by
   zify
--/
 
---set_option pp.all true
-
-#check (0:Int) + -1
 
 theorem test_le_proof (y:Nat) : ¬Int.NonNeg (-1 + -1 * Int.ofNat y) := sorry
 
-set_option pp.explicit true
 
 -- (p : Int.NonNeg (Int.ofNat b - Int.ofNat a))
-theorem test_le_assumption (x y:Nat) : Int.ofNat x ≤ Int.ofNat x + Int.ofNat y := by
+theorem test_le_assumption2 (x y:Nat) : Int.ofNat x ≤ Int.ofNat x + Int.ofNat y := by
   zify
   let r := test_le_proof y negGoal
   exact r
+
 
 /-
 -- (p : Int.NonNeg (Int.ofNat b - Int.ofNat a))

@@ -1,3 +1,8 @@
+/-
+This module defines operations for constructing a
+linear arithmetic state form a Lean context while
+ensuring Lean proofs can be constructed from SAT check.
+-/
 import ArithSolver.IntNormalization
 import Lean
 
@@ -104,6 +109,7 @@ def matchNot (e:Expr) : MetaM (Option Expr) := do
   let p := mkApp (mkConst ``Not) mvar
   pure $ if ← isDefEq p e then mvar else none
 
+section PredicateNormalizationLemmas
 
 theorem nat_le_prop {x y : Nat} (p : x ≤ y)
   : Int.NonNeg (OfNat.ofNat y - OfNat.ofNat x) := by
@@ -112,96 +118,62 @@ theorem nat_le_prop {x y : Nat} (p : x ≤ y)
   have q : x-y = 0 := Nat.sub_is_zero_is_le.mp p
   simp [Int.subNatNat, q]
   apply Int.NonNeg.mk
-
 theorem nat_lt_prop {x y : Nat} (p : x < y)
-  : Int.NonNeg (OfNat.ofNat y - OfNat.ofNat x - 1) := by
+  : Int.NonNeg (OfNat.ofNat y - OfNat.ofNat (x + 1)) := by
     have q := nat_le_prop p
-    simp only [OfNat.ofNat, Int.ofNat_sub_ofNat, Int.subNatNat_sub_ofNat]
     simp only [OfNat.ofNat, Int.ofNat_sub_ofNat] at q
     exact q
 def nat_ge_prop {x y : Nat} (p : x ≥ y) := nat_le_prop p
 def nat_gt_prop {x y : Nat} (p : x > y) := nat_lt_prop p
 
-theorem nat_not_le_prop {x y : Nat} (p : ¬(x ≤ y))
-  : Int.NonNeg (OfNat.ofNat x - OfNat.ofNat y - 1) := sorry
+theorem nat_not_le_prop {x y : Nat} (p : ¬(x ≤ y)) : Int.NonNeg (OfNat.ofNat x - OfNat.ofNat (y + 1)) :=
+  match Nat.lt_or_ge y x with
+  | Or.inl q => nat_lt_prop q
+  | Or.inr q => False.elim (p q)
 theorem nat_not_lt_prop {x y : Nat} (p : ¬(x < y))
-  : Int.NonNeg (OfNat.ofNat x - OfNat.ofNat y) := sorry
+  : Int.NonNeg (OfNat.ofNat x - OfNat.ofNat y) :=
+  match Nat.lt_or_ge x y with
+  | Or.inl q => False.elim (p q)
+  | Or.inr q => nat_le_prop q
 def nat_not_ge_prop {x y : Nat} (p : ¬(x ≥ y)) := nat_not_le_prop p
 def nat_not_gt_prop {x y : Nat} (p : ¬(x > y)) := nat_not_lt_prop p
 
+theorem int_le_prop {x y : Int} (p : x ≤ y) : Int.NonNeg (y - x) := p
+theorem int_lt_prop {x y : Int} (p : x < y) : Int.NonNeg (y - (x + 1)) := p
+def int_ge_prop {x y : Int} (p : x ≥ y) := int_le_prop p
+def int_gt_prop {x y : Int} (p : x > y) := int_lt_prop p
+
+theorem int_not_le_prop {x y : Int} (p : ¬(x ≤ y))
+  : Int.NonNeg (x - (y + 1)) :=
+  match Int.lt_or_ge y x with
+  | Or.inl q => int_lt_prop q
+  | Or.inr q => False.elim (p q)
+
+theorem int_not_lt_prop {x y : Int} (p : ¬(x < y))
+  : Int.NonNeg (x - y) :=
+  match Int.lt_or_ge x y with
+  | Or.inl q => False.elim (p q)
+  | Or.inr q => int_le_prop q
+def int_not_ge_prop {x y : Int} (p : ¬(x ≥ y)) := int_not_le_prop p
+def int_not_gt_prop {x y : Int} (p : ¬(x > y)) := int_not_lt_prop p
+
 theorem int_eq_prop (x y : Int) (p : x = y)
   : x - y = 0 := by simp [p, Int.sub_self]
+
 theorem nat_eq_prop {x y : Nat} (p : x = y)
   : (OfNat.ofNat x : Int) - OfNat.ofNat y = 0 := by
     apply int_eq_prop; rw [p]
 
-
-theorem int_le_prop {x y : Int} (p : x ≤ y)
-  : Int.NonNeg (y - x) := sorry
-theorem int_lt_prop {x y : Int} (p : x < y)
-  : Int.NonNeg (y - x - 1) := sorry
-def int_ge_prop {x y : Int} (p : x ≥ y) := int_le_prop p
-def int_gt_prop {x y : Int} (p : x > y) := int_lt_prop p
-
-
-private
-theorem subNatNat_zero_implies_equal {x y :Nat} (q:Int.subNatNat x y = 0) : x = y := by
-  simp [Int.subNatNat] at q
-  have p : y - x = 0 := by
-    generalize g:y-x=z
-    cases z with
-    | zero => rfl
-    | succ z => simp [g] at q
-  simp [p, OfNat.ofNat] at q
-  revert y
-  induction x with
-  | zero =>
-    intros y p q
-    exact p.symm
-  | succ x ind =>
-    intros y
-    cases y with
-    | zero =>
-      intros p q
-      simp [Nat.sub_zero] at q
-    | succ y =>
-      simp [Nat.succ_sub_succ]
-      exact (@ind y)
-
 theorem int_not_eq_prop {x y : Int} (p : ¬(x = y))  : ¬(x - y = 0) := by
   intro q
-  apply p; clear p
-  cases x with
-  | ofNat x =>
-    cases y with
-    | ofNat y =>
-      simp [Int.ofNat_sub_ofNat] at q
-      simp [subNatNat_zero_implies_equal q]
-    | negSucc y =>
-      simp only [Int.ofNat_sub_negSucc, OfNat.ofNat, Nat.add_succ] at q
-      apply Int.noConfusion q
-      intro r
-      apply Nat.noConfusion r
-  | negSucc x =>
-    cases y with
-    | ofNat y =>
-      simp only [Int.negSucc_sub_ofNat, OfNat.ofNat, Nat.add_succ] at q
-    | negSucc y =>
-      simp [Int.negSucc_sub_negSucc] at q
-      simp [subNatNat_zero_implies_equal q]
-
-theorem int_not_le_prop {x y : Int} (p : ¬(x ≤ y))
-  : Int.NonNeg (x - y - 1) := sorry
-theorem int_not_lt_prop {x y : Int} (p : ¬(x < y))
-  : Int.NonNeg (x - y) := sorry
-def int_not_ge_prop {x y : Int} (p : ¬(x ≥ y)) := int_not_le_prop p
-def int_not_gt_prop {x y : Int} (p : ¬(x > y)) := int_not_lt_prop p
-
+  apply p (Int.sub_eq_zero_implies_eq q)
 
 theorem nat_not_eq_prop {x y : Nat} (p : ¬(x = y))
   : ¬(Int.ofNat x - Int.ofNat y = 0) := by
   apply int_not_eq_prop
   simp [p]
+
+end PredicateNormalizationLemmas
 
 -- Lemma used for convert proofs from one type of predicate to another.
 private theorem intNonNeg_lemma {x y :Int} (eq:x = y) (p:Int.NonNeg x) : Int.NonNeg y := eq.subst p

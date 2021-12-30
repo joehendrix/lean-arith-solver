@@ -35,20 +35,20 @@ theorem cancelLemma (r p q v:Int) (h : p+q = 0) : (r + p*v) + q*v = r := by
   exact Eq.trans (cancel0Lemma h v ▸ rfl) (Int.add_zero r)
 
 private
-theorem buildProofLemma {x c a:Int} (h:x + c = a) (y:Int)
+theorem polyProofAddContextLemma {x c a:Int} (h:x + c = a) (y:Int)
   : (x + y) + c = a + y := by
   simp [h.symm, Int.add_assoc, Int.add_comm y c]
 
--- buildProof f x c a h rest where h is a proof of "x + c = a" returns
--- a proof "buildExpr f x rest + c = buildExpr f a rest"
+-- polyProofAddContext s x c a h poly idx where h is a proof of "x + c = a" returns
+-- a proof "(x + poly[idx] + poly[idx+1] + ..) + c = a + poly[idx] + poly[idx+1] + .."
 private
-def buildProof (s:State) (x c a:IntExpr) (h:Expr) (poly:Poly) (idx:Nat) : Expr := Id.run do
+def polyProofAddContext (s:State) (x c a:IntExpr) (h:Expr) (poly:Poly) (idx:Nat) : Expr := Id.run do
   let mut x := x
   let mut a := a
   let mut h := h
   for p in poly.elements[idx:] do
     let y := s.scalarProd p
-    h := mkAppN (mkConst ``buildProofLemma) #[x, c, a, h, y]
+    h := mkAppN (mkConst ``polyProofAddContextLemma) #[x, c, a, h, y]
     x := x + y
     a := a + y
   pure h
@@ -68,14 +68,14 @@ def polyAddProof (s:State) : ∀(poly:Poly) (q:Int), q ≠ 0 → Var → Expr
           let x := s.scalarProd poly.elements[0]
           let a := c + x
           let h := mkAppN (mkConst `Int.add_comm) #[x, c]
-          buildProof s x c a h poly 1
+          polyProofAddContext s x c a h poly 1
       | Nat.succ i =>
         let (p,u) := poly.elements[i]
         if u < v then
           let x := s.polyExpr poly (limit := i+1)
           let a := x + c
           let h := mkAppN (mkConst ``Eq.refl [levelOne]) #[intExpr, a]
-          buildProof s x c a h poly (i+1)
+          polyProofAddContext s x c a h poly (i+1)
         else if v < u then
           loop i
         else -- v = u
@@ -86,27 +86,27 @@ def polyAddProof (s:State) : ∀(poly:Poly) (q:Int), q ≠ 0 → Var → Expr
               let rflExpr := mkAppN (mkConst ``rfl [levelOne]) #[intExpr, intZeroExpr]
               -- Create proof: -q*v + q*v = 0.
               let h := mkAppN (mkConst ``cancel0Lemma) #[ (-q : Int), q, rflExpr, s.varExpr v]
-              buildProof s x c a h poly (i+1)
+              polyProofAddContext s x c a h poly (i+1)
             else
               let a := s.polyExpr poly i
               let x := a + s.scalarProd poly.elements[i]
               let rflExpr := mkAppN (mkConst ``rfl [levelOne]) #[intExpr, intZeroExpr]
               -- Create proof: (r + -q*v) + q*v = r.
               let h := mkAppN (mkConst ``cancelLemma) #[a, (-q : Int), q, s.varExpr v, rflExpr]
-              buildProof s x c a h poly (i+1)
+              polyProofAddContext s x c a h poly (i+1)
           else
             if i = 0 then
               let x := s.scalarProd poly.elements[0]
               let a := s.scalarProd (p+q, v)
               --  Create proof (p*v) + (q*v) = (p+q) * v
               let h := mkAppN (mkConst ``sum0Lemma) #[p, q, s.varExpr v]
-              buildProof s x c a h poly (i+1)
+              polyProofAddContext s x c a h poly (i+1)
             else
               let r := s.polyExpr poly i
               let x := r + s.scalarProd poly.elements[i]
               let a := r + s.scalarProd (p+q, v)
               let h := mkAppN (mkConst ``sumLemma) #[r, p, q, s.varExpr v]
-              buildProof s x c a h poly (i+1)
+              polyProofAddContext s x c a h poly (i+1)
   loop poly.elements.size
 
 end State
@@ -142,15 +142,24 @@ def matchIntLit (e:Expr) : MetaM (Option Int) := do
     | _ => pure ()
   pure none
 
-theorem add_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + m*y = c) : a + m*(x+y) = c := sorry
-theorem sub_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + -m*y = c) : a + m*(x-y) = c := sorry
-theorem neg_poly_lemma {m x a b:Int}  (g : a + (-m)*x = b) : a + m*(-x) = b := sorry
+theorem add_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + m*y = c) : a + m*(x+y) = c := by
+  rw [h.symm, g.symm, Int.mul_add, Int.add_assoc]
+theorem sub_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + -m*y = c) : a + m*(x-y) = c := by
+  rw [h.symm, g.symm, Int.mul_sub, Int.add_assoc, Int.sub_to_add_neg, Int.neg_mul]
+theorem neg_poly_lemma {m x a b:Int}  (g : a + (-m)*x = b) : a + m*(-x) = b := by
+  rw [g.symm, Int.mul_neg]
 
-private theorem mul_zero_lhs_poly_lemma {m y a:Int} : a + m*(0*y) = a := sorry
-private theorem mul_zero_rhs_poly_lemma (m x a:Int): a + m*(x*0) = a := sorry
+private theorem mul_zero_lhs_poly_lemma {m y a:Int} : a + m*(0*y) = a := by
+  simp only [Int.zero_mul, Int.mul_zero, Int.add_zero]
+private theorem mul_zero_rhs_poly_lemma (m x a:Int): a + m*(x*0) = a := by
+  simp only [Int.add_zero, Int.mul_zero]
 
-private theorem mul_lhs_poly_lemma {m x y a b:Int} (g: a + (m*x)*y = b) : a + m*(x*y) = b := sorry
-private theorem mul_rhs_poly_lemma {m x y a b:Int} (g: a + (m*y)*x = b) : a + m*(x*y) = b := sorry
+private theorem mul_lhs_poly_lemma {m x y a b:Int} (g: a + (m*x)*y = b) : a + m*(x*y) = b := by
+  rw [Int.mul_assoc] at g
+  exact g
+private theorem mul_rhs_poly_lemma {m x y a b:Int} (g: a + (m*y)*x = b) : a + m*(x*y) = b := by
+  rw [Int.mul_assoc, Int.mul_comm y x] at g
+  exact g
 
 -- | @appendAddExpr poly m e@ returns poly equivalent to `poly + m*e` along with proof that that
 -- poly.expr + m*e = ret.expr
@@ -252,7 +261,9 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
   let pr ← polyAddProof poly m m_ne v
   pure (poly.add m v, pr)
 
-theorem purifyIntLemmaPoly {x y:Int} (p:0 + 1 * x = y) : x = y := sorry
+theorem purifyIntLemmaPoly {x y:Int} (p:0 + 1 * x = y) : x = y := by
+  simp [Int.zero_add, Int.one_mul] at p
+  exact p
 
 theorem purifyIntLemmaVar {x y:Int} (p:0 + 1 * x = 1 * y) : x = y :=
   Eq.trans (purifyIntLemmaPoly p) (Int.one_mul y)

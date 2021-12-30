@@ -28,8 +28,6 @@ theorem add_zero (x : Int) : x + 0 = x :=
   | negSucc n => Eq.refl (negSucc n)
 
 
-private theorem sub_add_neg (x : Int) : x - y = x + -y := by rfl
-
 private
 theorem ofNat_add_subNatNat (x y z:Nat)
   : ofNat x + subNatNat y z = subNatNat (x + y) z := by
@@ -165,7 +163,7 @@ theorem neg_subNatNat (m n: Nat) : - (subNatNat m n) = subNatNat n m := by
     | zero =>
       simp
     | succ n =>
-      simp [neg_negSucc, Nat.add_succ, sub_add_neg, negOfNat, Nat.zero_sub]
+      simp [neg_negSucc, Nat.add_succ, negOfNat, Nat.zero_sub]
   | succ m =>
     simp [subNatNat]
     generalize g:n-m.succ=n_sub_m
@@ -203,6 +201,8 @@ section Subtraction
 
 theorem sub_self (x : Int) : x - x = 0 := sorry
 
+theorem sub_to_add_neg (x : Int) : x - y = x + -y := by rfl
+
 theorem ofNat_sub_ofNat (x y : Nat) : ofNat x - ofNat y = subNatNat x y := sorry
 theorem ofNat_sub_negSucc (x y : Nat) : ofNat x - negSucc y = ofNat (x + (y + 1)) := sorry
 theorem negSucc_sub_ofNat (x y : Nat) : negSucc x - ofNat y = negSucc (x + y) := sorry
@@ -210,7 +210,53 @@ theorem negSucc_sub_negSucc (x y : Nat) : negSucc x - negSucc y = subNatNat y x 
 
 theorem subNatNat_sub_ofNat (x y z : Nat) : subNatNat x y - ofNat z = subNatNat x (y+z) := sorry
 
+private
+theorem subNatNat_zero_implies_equal {x y :Nat} (q:Int.subNatNat x y = 0) : x = y := by
+  simp [Int.subNatNat] at q
+  have p : y - x = 0 := by
+    generalize g:y-x=z
+    cases z with
+    | zero => rfl
+    | succ z => simp [g] at q
+  simp [p, OfNat.ofNat] at q
+  revert y
+  induction x with
+  | zero =>
+    intros y p q
+    exact p.symm
+  | succ x ind =>
+    intros y
+    cases y with
+    | zero =>
+      intros p q
+      simp [Nat.sub_zero] at q
+    | succ y =>
+      simp [Nat.succ_sub_succ]
+      exact (@ind y)
+
+theorem sub_eq_zero_implies_eq {x y : Int} (q : x - y = 0) : x = y := by
+  cases x with
+  | ofNat x =>
+    cases y with
+    | ofNat y =>
+      simp [Int.ofNat_sub_ofNat] at q
+      simp [subNatNat_zero_implies_equal q]
+    | negSucc y =>
+      simp only [Int.ofNat_sub_negSucc, OfNat.ofNat, Nat.add_succ] at q
+      apply Int.noConfusion q
+      intro r
+      apply Nat.noConfusion r
+  | negSucc x =>
+    cases y with
+    | ofNat y =>
+      simp only [Int.negSucc_sub_ofNat, OfNat.ofNat, Nat.add_succ] at q
+    | negSucc y =>
+      simp [Int.negSucc_sub_negSucc] at q
+      simp [subNatNat_zero_implies_equal q]
+
 end Subtraction
+
+protected theorem lt_or_ge (x y : Int) : x < y ∨ x ≥ y := by admit
 
 section Multiplication
 
@@ -226,9 +272,18 @@ theorem zero_mul (x:Int) : 0 * x = 0 := by
   simp only [HMul.hMul, Mul.mul]
   cases x <;> simp only [Int.mul, Nat.zero_mul]
 
+theorem mul_zero : ∀ (x : Int), x * 0 = 0 := by admit
+
 theorem one_mul (x:Int) : 1 * x = x := by
   simp only [HMul.hMul, Mul.mul]
   cases x <;> simp only [Int.mul, negOfNat, Nat.one_mul]
+
+
+theorem mul_one (x:Int) : x * 1 = x := by admit
+
+theorem mul_comm : ∀ (x y : Int), x * y = y * x := by admit
+
+theorem mul_assoc : ∀ (x y z : Int), x * y * z = x * (y * z) := by admit
 
 private
 theorem subNatNat_mul_ofNat (x y z : Nat) : subNatNat x y * ofNat z = subNatNat (x * z) (y * z) := by
@@ -252,6 +307,14 @@ theorem add_mul (x y z : Int) : (x + y) * z = x * z + y * z := by
                Nat.succ_add, Nat.add_succ
                ]
 
+theorem mul_add : ∀ (x y z : Int), x * (y + z) = x * y + x * z := by admit
+
+theorem neg_mul (x y : Int) : -(x * y) = -x * y := sorry
+
+theorem mul_neg (x y : Int) : x * -y = -x * y := sorry
+
+theorem mul_sub : ∀ (x y z : Int), x * (y - z) = x * y - x * z := by admit
+
 end Multiplication
 
 section NeZero
@@ -261,46 +324,5 @@ theorem neg_ne_zero {x:Int} : x ≠ 0 → -x ≠ 0 := sorry
 theorem mul_ne_zero {x y:Int} : x ≠ 0 → y ≠ 0 → x * y ≠ 0 := sorry
 
 end NeZero
-
-/-
--- This section contains theorems that turn comparisons into normal forms.
-section predicateToNonNeg
-
-theorem nonNeg_of_le {x y : Int} (p : x ≤ y) : NonNeg (y + -x) := p
-
-theorem nonNeg_of_lt {x y : Int} (p : x < y) : NonNeg (y + -x + -1) := by
-  have q := nonNeg_of_le p
-  simp [neg_add, (add_assoc _ _ _).symm] at q
-  exact q
-
-theorem nonNeg_of_ge {x y : Int} (p : x ≥ y) : NonNeg (x + -y) := p
-
-theorem nonNeg_of_gt {x y : Int} (p : x > y) : NonNeg (x + -y + -1) := nonNeg_of_lt p
-
-theorem nonNeg_of_le_Nat {m n : Nat} (p : m ≤ n) : NonNeg (ofNat n + -ofNat m) := by
-  cases m with
-  | zero =>
-    exact NonNeg.mk n
-  | succ m =>
-    simp only [neg_ofNat, negOfNat, ofNat_add_negSucc]
-    have q := Nat.sub_is_zero_is_le.mp p
-    simp only [subNatNat, q]
-    exact NonNeg.mk _
-
-private theorem ofNat_succ {m : Nat} : ofNat (Nat.succ m) = ofNat m + 1 := by rfl
-
-theorem nonNeg_of_lt_Nat {m n : Nat} (p : m < n) : NonNeg (ofNat n + -ofNat m + -1) := by
-  have q := nonNeg_of_le_Nat p
-  simp only [ofNat_succ, neg_add] at q
-  simp only [add_assoc, q]
-
-theorem nonNeg_of_ge_Nat {x y : Nat} (p : x ≥ y) : NonNeg (ofNat x + -ofNat y) :=
-  nonNeg_of_le_Nat p
-
-theorem nonNeg_of_gt_Nat {x y : Nat} (p : x > y) : NonNeg (ofNat x + -ofNat y + -1) :=
-  nonNeg_of_lt_Nat p
-
-end predicateToNonNeg
--/
 
 end Int

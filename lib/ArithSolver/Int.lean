@@ -5,6 +5,8 @@ import ArithSolver.Nat
 
 namespace Int
 
+section Addition
+
 private theorem ofNat_add_ofNat (m n : Nat) : ofNat m + ofNat n = ofNat (m + n) := by rfl
 
 private theorem ofNat_add_negSucc (m n : Nat) : ofNat m + negSucc n = subNatNat m (Nat.succ n) := by rfl
@@ -27,45 +29,6 @@ theorem add_zero (x : Int) : x + 0 = x :=
 
 
 private theorem sub_add_neg (x : Int) : x - y = x + -y := by rfl
-
-@[simp]
-theorem neg_zero : - (0:Int) = 0 := by rfl
-
-theorem neg_ofNat (n:Nat) : -ofNat n = negOfNat n := by rfl
-
-theorem neg_negSucc (n:Nat) : -negSucc n = ofNat (n+1) := by rfl
-
-
-theorem neg_subNatNat (m n: Nat) : - (subNatNat m n) = subNatNat n m := by
-  cases m with
-  | zero =>
-    simp [subNatNat]
-    cases n with
-    | zero =>
-      simp
-    | succ n =>
-      simp [neg_negSucc, Nat.add_succ, sub_add_neg, negOfNat, Nat.zero_sub]
-  | succ m =>
-    simp [subNatNat]
-    generalize g:n-m.succ=n_sub_m
-    cases n_sub_m with
-    | zero =>
-      simp [neg_ofNat]
-      generalize m.succ-n=m_sub_n
-      cases m_sub_n with
-      | zero =>
-        simp [negOfNat]
-      | succ m_sub_n =>
-        simp [negOfNat]
-    | succ n_sub_m =>
-      generalize h:m.succ-n=m_sub_n
-      cases m_sub_n with
-      | zero =>
-        simp [neg_negSucc]
-      | succ m_sub_n =>
-        have r : Nat.succ m ≤ n:= Nat.le_of_lt (Nat.lt_of_sub_succ g)
-        have s : ¬ (Nat.succ m ≤ n) := Nat.not_le_of_gt (Nat.lt_of_sub_succ h)
-        exact False.elim (s r)
 
 private
 theorem ofNat_add_subNatNat (x y z:Nat)
@@ -152,6 +115,30 @@ theorem subNatNat_add_negSucc (x y z:Nat)
     have q := @Nat.sub_add_lassoc y x z p
     exact q
 
+theorem add_comm (x y : Int) : x + y = y + x := by
+  cases x <;> cases y <;> simp only
+    [ofNat_add_ofNat, ofNat_add_negSucc,
+     negSucc_add_ofNat, negSucc_add_negSucc,
+     Nat.add_comm]
+
+theorem add_assoc (x y z : Int) : x + y + z = x + (y + z) := by
+  cases x <;> cases y <;> cases z <;>  simp only
+    [ofNat_add_ofNat, ofNat_add_negSucc, negSucc_add_ofNat, negSucc_add_negSucc,
+      ofNat_add_subNatNat, subNatNat_add_ofNat,
+      subNatNat_add_negSucc, negSucc_add_subNatNat,
+      Nat.succ_add, Nat.add_succ, Nat.add_assoc]
+
+end Addition
+
+section Negation
+
+@[simp]
+theorem neg_zero : - (0:Int) = 0 := by rfl
+
+theorem neg_ofNat (n:Nat) : -ofNat n = negOfNat n := by rfl
+
+theorem neg_negSucc (n:Nat) : -negSucc n = ofNat (n+1) := by rfl
+
 private
 theorem negOfNat_add_ofNat  (x y:Nat)
   : negOfNat x + ofNat y = subNatNat y x := by
@@ -170,6 +157,37 @@ theorem negOfNat_add_negOfNat (x y : Nat)
     simp [negOfNat, Nat.add_succ, Nat.succ_add,
           negSucc_add_negSucc]
 
+theorem neg_subNatNat (m n: Nat) : - (subNatNat m n) = subNatNat n m := by
+  cases m with
+  | zero =>
+    simp [subNatNat]
+    cases n with
+    | zero =>
+      simp
+    | succ n =>
+      simp [neg_negSucc, Nat.add_succ, sub_add_neg, negOfNat, Nat.zero_sub]
+  | succ m =>
+    simp [subNatNat]
+    generalize g:n-m.succ=n_sub_m
+    cases n_sub_m with
+    | zero =>
+      simp [neg_ofNat]
+      generalize m.succ-n=m_sub_n
+      cases m_sub_n with
+      | zero =>
+        simp [negOfNat]
+      | succ m_sub_n =>
+        simp [negOfNat]
+    | succ n_sub_m =>
+      generalize h:m.succ-n=m_sub_n
+      cases m_sub_n with
+      | zero =>
+        simp [neg_negSucc]
+      | succ m_sub_n =>
+        have r : Nat.succ m ≤ n:= Nat.le_of_lt (Nat.lt_of_sub_succ g)
+        have s : ¬ (Nat.succ m ≤ n) := Nat.not_le_of_gt (Nat.lt_of_sub_succ h)
+        exact False.elim (s r)
+
 theorem neg_add (x y : Int) : -(x + y) = -x + -y := by
   cases x <;> cases y <;> simp
     [ofNat_add_ofNat, ofNat_add_negSucc, negSucc_add_ofNat, negSucc_add_negSucc,
@@ -179,19 +197,22 @@ theorem neg_add (x y : Int) : -(x + y) = -x + -y := by
      negOfNat_add_ofNat, ofNat_add_negOfNat, negOfNat_add_negOfNat
     ]
 
-theorem add_comm (x y : Int) : x + y = y + x := by
-  cases x <;> cases y <;> simp only
-    [ofNat_add_ofNat, ofNat_add_negSucc,
-     negSucc_add_ofNat, negSucc_add_negSucc,
-     Nat.add_comm]
+end Negation
 
-theorem add_assoc (x y z : Int) : x + y + z = x + (y + z) := by
-  cases x <;> cases y <;> cases z <;>  simp only
-    [ofNat_add_ofNat, ofNat_add_negSucc, negSucc_add_ofNat, negSucc_add_negSucc,
-      ofNat_add_subNatNat, subNatNat_add_ofNat,
-      subNatNat_add_negSucc, negSucc_add_subNatNat,
-      Nat.succ_add, Nat.add_succ, Nat.add_assoc]
+section Subtraction
 
+theorem sub_self (x : Int) : x - x = 0 := sorry
+
+theorem ofNat_sub_ofNat (x y : Nat) : ofNat x - ofNat y = subNatNat x y := sorry
+theorem ofNat_sub_negSucc (x y : Nat) : ofNat x - negSucc y = ofNat (x + (y + 1)) := sorry
+theorem negSucc_sub_ofNat (x y : Nat) : negSucc x - ofNat y = negSucc (x + y) := sorry
+theorem negSucc_sub_negSucc (x y : Nat) : negSucc x - negSucc y = subNatNat y x := sorry
+
+theorem subNatNat_sub_ofNat (x y z : Nat) : subNatNat x y - ofNat z = subNatNat x (y+z) := sorry
+
+end Subtraction
+
+section Multiplication
 
 private theorem ofNat_mul_ofNat (m n : Nat) : ofNat m * ofNat n = ofNat (m * n) := by rfl
 
@@ -230,6 +251,16 @@ theorem add_mul (x y z : Int) : (x + y) * z = x * z + y * z := by
                (Nat.add_mul _ _ _).symm,
                Nat.succ_add, Nat.add_succ
                ]
+
+end Multiplication
+
+section NeZero
+-- Special cases
+
+theorem neg_ne_zero {x:Int} : x ≠ 0 → -x ≠ 0 := sorry
+theorem mul_ne_zero {x y:Int} : x ≠ 0 → y ≠ 0 → x * y ≠ 0 := sorry
+
+end NeZero
 
 /-
 -- This section contains theorems that turn comparisons into normal forms.

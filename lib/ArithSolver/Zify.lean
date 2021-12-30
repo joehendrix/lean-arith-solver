@@ -1,4 +1,4 @@
-import ArithSolver.Basic
+import ArithSolver.ArithM
 import ArithSolver.Notation
 import Lean
 
@@ -8,10 +8,11 @@ open Lean.Elab.Tactic
 
 namespace ArithSolver
 
-private def natExpr := mkConst ``Nat
-private def intExpr := mkConst ``Int
+private def natExpr : Expr := mkConst ``Nat
+private def intExpr : Expr := mkConst ``Int
 private def ofNatExpr : Expr := mkConst ``Int.ofNat
 private def intNonNegMkExpr : Expr := mkConst ``Int.NonNeg.mk
+private def propExpr : Expr := mkSort levelZero
 
 /-
 
@@ -56,10 +57,6 @@ structure NegatedGoal where
   -- An expression referencing the input proof.
   assumptionProof : FVarId
 
--- | This intrudces a lambda and replaces the free var fvar having type atp in proof with a bound variable
-def bindAssumption (fvar : FVarId) (prop proof : Expr) : Expr :=
-  mkLambda `negGoal BinderInfo.default prop (proof.abstract #[mkFVar fvar])
-
 -- | An assumption in the goal
 structure Assumption where
   -- The property we can assume
@@ -70,19 +67,33 @@ structure Assumption where
 -- | Given a proposition equivalent to λ(x:P) => False, this returns type p
 def parseNegatedGoal (tactic:Name) (goalId:MVarId) (ptp:Expr) : MetaM Expr := do
   match ptp with
-  | Expr.forallE an atp (Expr.const ``False [] fd) ad => do
+  | Expr.forallE an atp (Expr.const ``False _ _) ad => do
     pure atp
   | Expr.app (Expr.const ``Not [] _) atp _ => do
     pure atp
   | _ =>
     throwTacticEx tactic goalId m!"Expected negation input goal to be False instance of {indentExpr ptp}"
 
+def falseExpr : Expr := mkConst ``False
+
 structure Goal where
-  -- Callback that adds assumptions to local context and returns
-  -- proof obligations.
-  onAddAssumptions : MetaM (List MVarId)
-  -- Callback that given a proof of false produces a proof of the goal.
-  onVerify : Expr → MetaM Unit
+  -- Given a proof from the solver
+  onMkProof : Expr → Expr
+
+def Goal.onAddAssumptions (g:Goal) (goalId:MVarId) (s:State) : MetaM (List MVarId) := do
+  let tag   ← getMVarTag goalId
+  let lctx ← getLCtx
+  let (lctx, fvars) ← s.addAssertions lctx
+  withReader (fun ctx => { ctx with lctx := lctx }) $ do
+    let g ← mkFreshExprSyntheticOpaqueMVar falseExpr tag
+    -- Turn goal into lambda with free variables from assertions
+    let fn ← Meta.mkLambdaFVars fvars g
+    -- Assign goal
+    assignExprMVar goalId (mkAppN fn s.proofs)
+    pure [g.mvarId!]
+
+def Goal.onVerify (g:Goal) (goalId:MVarId) (s:State) (goalProof:Expr) : MetaM Unit := do
+  assignExprMVar goalId (g.onMkProof goalProof)
 
 -- | This represents a functions of the form ∀(args), P → Q
 structure Transformer where
@@ -131,7 +142,7 @@ def resolveTransformerArgs (proofExpr:Expr) (t:Transformer) : MetaM Bool := do
 -- | Match `(Int.NonNeg e) and return e
 def matchIntNonNeg (e:Expr) : MetaM (Option Expr) := do
   let mvar ← mkFreshExprMVar intExpr MetavarKind.natural `n
-  pure $ if ← isDefEq (mkApp intNonNegExpr mvar) e then some mvar else none
+  pure $ if ← isDefEq (mkIntNonNegExpr mvar) e then some mvar else none
 
 def matchIntEq0 (e:Expr) : MetaM (Option Expr) := do
   let mvar ← mkFreshExprMVar intExpr MetavarKind.natural `n
@@ -143,8 +154,6 @@ def matchNotIntEq0 (e:Expr) : MetaM (Option Expr) := do
     pure $ some mvar
   else
     none
-
-def propExpr : Expr := mkSort levelZero
 
 def matchNot (e:Expr) : MetaM (Option Expr) := do
   let mvar ← mkFreshExprMVar propExpr MetavarKind.natural `a
@@ -225,6 +234,12 @@ theorem add_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + m*y = c) : 
 theorem sub_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + -m*y = c) : a + m*(x-y) = c := sorry
 theorem neg_poly_lemma {m x a b:Int}  (g : a + (-m)*x = b) : a + m*(-x) = b := sorry
 
+theorem mul_zero_lhs_poly_lemma {m y a:Int} : a + m*(0*y) = a := sorry
+theorem mul_zero_rhs_poly_lemma (m x a:Int): a + m*(x*0) = a := sorry
+
+theorem mul_lhs_poly_lemma {m x y a b:Int} (g: a + (m*x)*y = b) : a + m*(x*y) = b := sorry
+theorem mul_rhs_poly_lemma {m x y a b:Int} (g: a + (m*y)*x = b) : a + m*(x*y) = b := sorry
+
 -- | @appendAddExpr poly m e@ returns poly equivalent to `poly + m*e` along with proof that that
 -- poly.expr + m*e = ret.expr
 partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
@@ -233,48 +248,43 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
   match ← matchIntLit e with
   | none => pure ()
   | some x =>
-    let s ← get
     let r ←
       if x_ne : x = 0 then
-        let n := Poly.expr s.varExpr poly
-        let pr := mkAppN (mkConst ``rfl [levelOne]) #[intExpr, n]
+        let aexpr ← polyExpr poly
+        let pr := mkAppN (mkConst ``rfl [levelOne]) #[intExpr, aexpr]
         pure (poly, pr)
       else
         let y := m * x
         -- p + m * x * 1 = return
-        let pr := Poly.addProof (s.varExpr) poly y (mul_ne_zero m_ne x_ne) Var.constOne
-        pure (poly.add y Var.constOne, pr)
+        let pr ← polyAddProof poly y (mul_ne_zero m_ne x_ne) Var.one
+        pure (poly.add y Var.one, pr)
     return r
 
   -- Match add
-  match ← matchBinOp intAddExpr intExpr e with
+  match ← matchBinOp intAddConst intExpr e with
   | none => pure ()
   | some (x, y) => do
-    let s ← get
-    let mexpr := mkIntLit m
-    let aexpr := Poly.expr s.varExpr poly
+    let aexpr ← polyExpr poly
     let (poly, x_pr) ← appendAddExprFromInt m m_ne x poly
-    let bexpr := Poly.expr s.varExpr poly
+    let bexpr ← polyExpr poly
     let (poly, y_pr) ← appendAddExprFromInt m m_ne y poly
-    let cexpr := Poly.expr s.varExpr poly
-    let pr := mkAppN (mkConst ``add_poly_lemma) #[mexpr, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
+    let cexpr ← polyExpr poly
+    let pr := mkAppN (mkConst ``add_poly_lemma) #[m, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
     return (poly, pr)
 
   -- Match sub
 --  let subExpr := mkAppN (mkConst ``Sub.sub [levelZero]) #[intExpr, mkConst ``Int.instSubInt]
 --  let subExpr := mkConst ``Int.sub
-  match ← matchBinOp intSubExpr intExpr e with
+  match ← matchBinOp intSubConst intExpr e with
   | none =>
     pure ()
   | some (x, y) => do
-    let s ← get
-    let mexpr := mkIntLit m
-    let aexpr := Poly.expr s.varExpr poly
+    let aexpr ← polyExpr poly
     let (poly, x_pr) ← appendAddExprFromInt m m_ne x poly
-    let bexpr := Poly.expr s.varExpr poly
+    let bexpr ← polyExpr poly
     let (poly, y_pr) ← appendAddExprFromInt (- m) (neg_ne_zero m_ne) y poly
-    let cexpr := Poly.expr s.varExpr poly
-    let pr := mkAppN (mkConst ``sub_poly_lemma) #[mexpr, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
+    let cexpr ← polyExpr poly
+    let pr := mkAppN (mkConst ``sub_poly_lemma) #[m, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
     return (poly, pr)
 
   -- Match negation
@@ -282,43 +292,48 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
   match ← matchUnaryOp negExpr intExpr e with
   | none => pure ()
   | some x => do
-    let s ← get
-    let mexpr := mkIntLit m
-    let aexpr := Poly.expr s.varExpr poly
+    let aexpr ← polyExpr poly
     let (poly, x_pr) ← appendAddExprFromInt (-m) (neg_ne_zero m_ne) x poly
-    let bexpr := Poly.expr s.varExpr poly
-    let pr := mkAppN (mkConst ``neg_poly_lemma) #[mexpr, x, aexpr, bexpr, x_pr]
+    let bexpr ← polyExpr poly
+    let pr := mkAppN (mkConst ``neg_poly_lemma) #[m, x, aexpr, bexpr, x_pr]
     return (poly, pr)
 
   -- Match scalar multiplication
-  /-
-  match ← matchBinOp intMulExpr intExpr e with
+  match ← matchBinOp intMulConst intExpr e with
   | none => pure ()
   | some (x, y) => do
+    let aexpr ← polyExpr poly
     match ← matchIntLit x with
     | none =>
       pure ()
     | some xn =>
       let r ←
         if xn_ne:xn = 0 then
-          pure (poly, sorry)
+          let pr := mkAppN (mkConst ``mul_zero_lhs_poly_lemma) #[m, y, aexpr]
+          -- aexpr + m*(0*y) = aexpr
+          pure (poly, pr)
         else
-          let (p, y_eq) ← appendAddExprFromInt (m * xn) (mul_ne_zero m_ne xn_ne) y poly
-          pure (poly, sorry)
+          -- y_eq: aexpr + (m*x)*y = poly'.expr
+          let (poly, y_eq) ← appendAddExprFromInt (m * xn) (mul_ne_zero m_ne xn_ne) y poly
+          let bexpr ← polyExpr poly
+          let pr := mkAppN (mkConst `mul_lhs_poly_lemma) #[m, x, y, aexpr, bexpr]
+          pure (poly, pr)
       return r
     match ← matchIntLit y with
     | none =>
       pure ()
-    | some n =>
+    | some yn =>
       let r ←
-        if n_ne:n = 0 then
-          pure (poly, sorry)
+        if n_ne:yn = 0 then
+          let pr := mkAppN (mkConst ``mul_zero_rhs_poly_lemma) #[m, x, aexpr]
+          pure (poly, pr)
         else
-          let (p, x_eq) ← appendAddExprFromInt (m * n) (mul_ne_zero m_ne n_ne) x poly
-          pure (poly, sorry)
+          let (p, x_eq) ← appendAddExprFromInt (m * yn) (mul_ne_zero m_ne n_ne) x poly
+          let bexpr ← polyExpr poly
+          let pr := mkAppN (mkConst `mul_rhs_poly_lemma) #[m, x, y, aexpr, bexpr]
+          pure (poly, pr)
       return r
     pure ()
--/
 
   let v ← getUninterpVar e
   let pr ← polyAddProof poly m m_ne v
@@ -336,27 +351,23 @@ def purifyIntExpr (e:Expr) : ArithM (Var × Expr) := do
   have g : 1 ≠ 0 := by
     apply Nat.noConfusion
   have one_ne : (1:Int) ≠ 0 := λx => Int.noConfusion x g
+  let e ← instantiateMVars e
   let (p,pr) ← appendAddExprFromInt 1 one_ne e Poly.zero
   -- pr  has type" 0 + 1 * e = p.expr"
   match p with
   | ⟨#[(1, v)]⟩ => do
-    let s ← get
     -- Make pr have type e = v
-    let pr := mkAppN (mkConst ``purifyIntLemmaVar) #[e, s.varExpr v, pr]
+    let pr := mkAppN (mkConst ``purifyIntLemmaVar) #[e, ← varExpr v, pr]
     pure (v, pr)
   | otherwise => do
-    let v ← mkDeclVar (Decl.poly p)
+    let v ← getPolyVar p
     -- Make pr have type e = v
-    let s ← get
-    let pr := mkAppN (mkConst ``purifyIntLemmaPoly) #[e, Poly.expr s.varExpr p, pr]
+    let pr := mkAppN (mkConst ``purifyIntLemmaPoly) #[e, ← polyExpr p, pr]
     pure (v, pr)
-
-theorem substIntNonNeg {x y:Int} (p:Int.NonNeg x) (eq:x = y) : Int.NonNeg y := eq ▸ p
 
 theorem intNonNeg_lemma {x y :Int} : x = y → Int.NonNeg x → Int.NonNeg y := sorry
 theorem intEq0_lemma {x y :Int} : x = y → x = 0 → y = 0 := sorry
 theorem intNe0_lemma {x y :Int} : x = y → ¬(x = 0) → ¬(y = 0) := sorry
-
 
 -- | Analyze a proof and a proposition to produce a Linear arith predicate along with a proof
 -- that of the predicate.
@@ -366,24 +377,21 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
   | none => pure ()
   | some e =>
     let (v, pr) ← purifyIntExpr e
-    let s ← get
     IO.println s!"Asserting non neg:\n  proof = {←instantiateMVars proof}"
-    let proof2 := mkAppN (mkConst ``intNonNeg_lemma) #[e, s.varExpr v, pr, proof]
+    let proof2 := mkAppN (mkConst ``intNonNeg_lemma) #[e, ← varExpr v, pr, proof]
     return (some (proof2, Pred.IsGe0 v))
   -- Check if prop match (e = Int.ofNat 0)
   match ← matchIntEq0 prop with
   | none => pure ()
   | some e =>
     let (v, pr) ← purifyIntExpr e
-    let s ← get
-    let proof := mkAppN (mkConst ``intEq0_lemma) #[e, s.varExpr v, pr, proof]
+    let proof := mkAppN (mkConst ``intEq0_lemma) #[e, ← varExpr v, pr, proof]
     return (some (proof, Pred.IsEq0 v))
   match ← matchNotIntEq0 prop with
   | none => pure ()
   | some e =>
     let (v, pr) ← purifyIntExpr e
-    let s ← get
-    let proof := mkAppN (mkConst ``intNe0_lemma) #[e, s.varExpr v, pr, proof]
+    let proof := mkAppN (mkConst ``intNe0_lemma) #[e, ← varExpr v, pr, proof]
     return (some (proof, Pred.IsNe0 v))
   let mkTrans (nm:Name) (m:optParam (Option Nat) none) : Expr × Option Nat := (mkConst nm, m)
   -- Create list of transformers to apply
@@ -418,25 +426,22 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
       continue
     unless ← resolveTransformerArgs rule t do
       continue
-    IO.println s!"Propagating:\n  source = {←instantiateMVars proof}"
     found := (mkApp (mkAppN rule t.arguments) proof, t.resultType)
     break
   match found with
   | none =>
-    IO.println s!"Drop assertion {← instantiateMVars prop}"
     pure none
   | some (proof, prop) => do
-    IO.println s!"  result = {←instantiateMVars proof}"
     extractPropPred proof prop
 
 -- | See if we can add the local declaration to the arithmetic unit.
 -- proof is a term of type prop.
-def processAssumptionProp (origin : Assertion.Origin) (proof:Expr) (prop:Expr) : ArithM Unit := do
+def processAssumptionProp (origin : Option FVarId) (name:Name) (proof:Expr) (prop:Expr) : ArithM Unit := do
   match ← extractPropPred proof prop with
   | none => do
-    IO.println s!"Drop assertion {← instantiateMVars prop}"
+    pure ()
   | some (proof, pred) => do
-    assertPred origin proof pred
+    assertPred origin name proof pred
 
 def processDecls (lctx:LocalContext) : ArithM Unit := do
   let mut seenFirst := false
@@ -449,16 +454,15 @@ def processDecls (lctx:LocalContext) : ArithM Unit := do
     -- Skip if declaration has been deleted.
     let some d ← pure md
          | continue
-    IO.println s!"Decl {d.type}"
     -- TODO: Figure out how to support let declarations
     if d.isLet then
       continue
     -- If we have a natural number, then declare it.
     if ← isDefEq d.type natExpr then
-      let e := mkApp ofNatExpr (mkFVar d.fvarId)
-      let v ← getUninterpVar e
+      let v ← getUninterpVar (mkApp ofNatExpr (mkFVar d.fvarId))
       -- Assert v is non negative
-      assertPred Assertion.Origin.uninterpNat (mkApp intNonNegMkExpr e) (Pred.IsGe0 v)
+      let proof := mkApp intNonNegMkExpr (mkFVar d.fvarId)
+      assertPred none (d.userName ++ "isGe0") proof (Pred.IsGe0 v)
       continue
     -- If we have a natural number, then declare it.
     if ← isDefEq d.type intExpr then
@@ -466,24 +470,7 @@ def processDecls (lctx:LocalContext) : ArithM Unit := do
       continue
     -- If this is a proposition then try assuming it.
     if ← isDefEq (← inferType d.type) propExpr then do
-      let fvar := ← mkFreshFVarId
-      processAssumptionProp (Assertion.Origin.localContext d.fvarId d.userName fvar) (mkFVar fvar) d.type
-
--- | Add assertions to local context.
-def addAssertions (lctx:LocalContext) (s : State) : LocalContext := Id.run do
-  let mut lctx := lctx
-  for a in s.assertions do
-    match a.origin with
-    | Assertion.Origin.localContext prevVar userName newVar =>
-      lctx := lctx.erase prevVar
-      lctx := lctx.mkLocalDecl newVar userName (s.predExpr a.prop)
---      lctx := lctx.mkLetDecl newVar userName (s.predExpr a.prop) a.proof
-    | Assertion.Origin.negGoal fvar =>
-      lctx := lctx.mkLocalDecl fvar `negGoal (s.predExpr a.prop)
---      lctx := lctx.mkLetDecl fvar `negGoal2 (s.predExpr a.prop) a.proof
-    | Assertion.Origin.uninterpNat =>
-      pure ()
-  pure lctx
+      processAssumptionProp (some d.fvarId) d.userName (mkFVar d.fvarId) d.type
 
 -- Negating goal
 
@@ -492,44 +479,18 @@ theorem decidable_by_contra {P:Prop} [h:Decidable P] (q : ∀(ng:¬ P), False) :
   | isFalse h => False.elim (q h)
   | isTrue h => h
 
-def falseExpr : Expr := mkConst ``False
-
 def negateArithGoal (tactic:Name) (goalId:MVarId) : ArithM Goal := do
   let md ← getMVarDecl goalId
   processDecls md.lctx
-  if ← isDefEq md.type (mkConst ``False) then
-    let s ← get
-    IO.println s! "Extracted {s.assertions.size} assertions."
-    return {
-      onAddAssumptions := do
-        let lctx := addAssertions (← getLCtx) s
-        let tag   ← getMVarTag goalId
-        withReader (fun ctx => { ctx with lctx := lctx }) do
-          let proof ← mkFreshExprSyntheticOpaqueMVar falseExpr tag
-          assignExprMVar goalId proof
-          pure [proof.mvarId!]
-      onVerify := assignExprMVar goalId
-    }
+  if ← isDefEq md.type falseExpr then
+    return { onMkProof := id }
   match ← matchNot md.type with
   | none => pure ()
-  | some atp => do
-    let fvar := ← mkFreshFVarId
-    processAssumptionProp (Assertion.Origin.negGoal fvar) (mkFVar fvar) atp
-    let s ← get
-    IO.println s! "Extracted {s.assertions.size} assertions."
+  | some prop => do
+    let fvar ← mkFreshFVarId
+    processAssumptionProp none `negGoal (mkFVar fvar) prop
     -- Create verification
-    return {
-        onAddAssumptions := do
-          let lctx := addAssertions (← getLCtx) s
-          let tag   ← getMVarTag goalId
-          withReader (fun ctx => { ctx with lctx := lctx }) do
-            let proof ← mkFreshExprSyntheticOpaqueMVar falseExpr tag
-            assignExprMVar goalId <| bindAssumption fvar atp proof
-            pure [proof.mvarId!]
-        onVerify := λproof => do
-          -- Generate proof to pass into proof expr
-          assignExprMVar goalId <| bindAssumption fvar atp proof
-        }
+    return { onMkProof := mkLambda Name.anonymous BinderInfo.default prop }
 
   let decideByContraExpr := mkConst ``decidable_by_contra
   let target := md.type
@@ -542,39 +503,12 @@ def negateArithGoal (tactic:Name) (goalId:MVarId) : ArithM Goal := do
   let decideByContraExpr := mkAppN decideByContraExpr t.arguments
   -- Get negated goal from assumption type
   let prop ← parseNegatedGoal tactic goalId t.assumptionType
-  -- Create free variable for representing assumption
-  let fvar := ← mkFreshFVarId
   -- Pvar is a metavariable of type "prop -> False"
-  let assumptionProof ←
-        match ← extractPropPred (mkBVar 0) prop with
-        | none => do
-          throwError "Could not extract prop"
-        | some (proof, pred) => do
-          assertPred (Assertion.Origin.negGoal fvar) proof pred
-          pure proof
-  let s ← get
-
+  processAssumptionProp none `negGoal (mkBVar 0) prop
   -- Create verification
   pure $ {
-      onAddAssumptions := do
-        let lctx := addAssertions (← getLCtx) s
-        let falseExpr := mkConst ``False
-        withReader (fun ctx => { ctx with lctx := lctx }) do
-          IO.println s!"tryNegateGoal onAddAssumptions"
-          let tag   ← getMVarTag goalId
-          let goalProof ← mkFreshExprSyntheticOpaqueMVar falseExpr tag
-          -- Make lambda that takes proof with the inferred type and produces false.
-          let goalLambda ← mkLambdaFVars #[mkFVar fvar] goalProof
-          -- Instantiate lambda with the proof we have
-          let goalRes := mkApp goalLambda assumptionProof
-          let contraArg := mkLambda Name.anonymous BinderInfo.default prop goalRes
-          assignExprMVar goalId $ mkApp decideByContraExpr contraArg
-          pure [goalProof.mvarId!]
-      onVerify := λgoalProof => do
-        -- Generate proof to pass into proof expr
-        let goalRes := goalProof.replaceFVar (mkFVar fvar) assumptionProof
-        let contraArg := mkLambda Name.anonymous BinderInfo.default prop goalRes
-        assignExprMVar goalId $ mkApp decideByContraExpr contraArg
+      onMkProof := fun goalProof =>
+        mkApp decideByContraExpr (mkLambda Name.anonymous BinderInfo.default prop goalProof)
       }
 
 syntax (name := zify) "zify" : tactic
@@ -584,8 +518,8 @@ syntax (name := zify) "zify" : tactic
 @[tactic zify] def evalZify : Tactic := fun stx => do
   liftMetaTactic fun mvarId => do
     checkNotAssigned mvarId `zify
-    let (goal, _) ← (negateArithGoal `zify mvarId).run
-    let r@([goalId]) ← goal.onAddAssumptions
+    let (goal, s) ← (negateArithGoal `zify mvarId).run
+    let r@([goalId]) ← goal.onAddAssumptions mvarId s
       | throwError "Expected more goals"
     pure r
 
@@ -597,13 +531,9 @@ def test_false_goal (a b : Nat) (p:False) : False := by
   exact p
 
 -- (p : Int.NonNeg (Int.ofNat b - Int.ofNat a))
-def test_nonneg_assumption (x y : Int) (p : Int.NonNeg (x + y)) : False := by
+def test_nonneg_assumption (x y : Int) (p : Int.NonNeg (x + y)) (q: False) : False := by
   zify
-
--- (p : Int.NonNeg (Int.ofNat b - Int.ofNat a))
-def test_eq0_assumption (x : Int) (p : x = 0): False := by
-  zify
-
+  exact q
 
 theorem test_le_proof (y:Nat) : ¬Int.NonNeg (-1 + -1 * Int.ofNat y) := sorry
 

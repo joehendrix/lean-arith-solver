@@ -1,3 +1,6 @@
+/-
+This defines additional operations that could go into Lean's nat definitions.
+-/
 namespace Nat
 
 protected

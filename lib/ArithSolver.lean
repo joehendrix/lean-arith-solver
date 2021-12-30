@@ -1,4 +1,4 @@
-import ArithSolver.Zify
+import ArithSolver.ToPoly
 
 open ArithSolver
 

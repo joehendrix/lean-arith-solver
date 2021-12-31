@@ -111,30 +111,20 @@ def matchNot (e:Expr) : MetaM (Option Expr) := do
 
 section PredicateNormalizationLemmas
 
-theorem nat_le_prop {x y : Nat} (p : x ≤ y)
-  : Int.NonNeg (OfNat.ofNat y - OfNat.ofNat x) := by
-  simp [OfNat.ofNat]
-  simp [Int.ofNat_sub_ofNat, Int.subNatNat_sub_ofNat]
-  have q : x-y = 0 := Nat.sub_is_zero_is_le.mp p
-  simp [Int.subNatNat, q]
-  apply Int.NonNeg.mk
 theorem nat_lt_prop {x y : Nat} (p : x < y)
-  : Int.NonNeg (OfNat.ofNat y - OfNat.ofNat (x + 1)) := by
-    have q := nat_le_prop p
-    simp only [OfNat.ofNat, Int.ofNat_sub_ofNat] at q
-    exact q
-def nat_ge_prop {x y : Nat} (p : x ≥ y) := nat_le_prop p
-def nat_gt_prop {x y : Nat} (p : x > y) := nat_lt_prop p
+  : Int.NonNeg (OfNat.ofNat y - OfNat.ofNat (x + 1)) := Int.nonNeg_of_nat_le p
+def nat_ge_prop {x y : Nat} (p : x ≥ y) := Int.nonNeg_of_nat_le p
+def nat_gt_prop {x y : Nat} (p : x > y) := Int.nonNeg_of_nat_le p
 
 theorem nat_not_le_prop {x y : Nat} (p : ¬(x ≤ y)) : Int.NonNeg (OfNat.ofNat x - OfNat.ofNat (y + 1)) :=
   match Nat.lt_or_ge y x with
-  | Or.inl q => nat_lt_prop q
+  | Or.inl q => Int.nonNeg_of_nat_le q
   | Or.inr q => False.elim (p q)
 theorem nat_not_lt_prop {x y : Nat} (p : ¬(x < y))
   : Int.NonNeg (OfNat.ofNat x - OfNat.ofNat y) :=
   match Nat.lt_or_ge x y with
   | Or.inl q => False.elim (p q)
-  | Or.inr q => nat_le_prop q
+  | Or.inr q => Int.nonNeg_of_nat_le q
 def nat_not_ge_prop {x y : Nat} (p : ¬(x ≥ y)) := nat_not_le_prop p
 def nat_not_gt_prop {x y : Nat} (p : ¬(x > y)) := nat_not_lt_prop p
 
@@ -209,7 +199,7 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
   let transformers : Array (Expr × Option Nat) := #[
           mkTrans ``nat_eq_prop,
           mkTrans ``nat_lt_prop,
-          mkTrans ``nat_le_prop,
+          mkTrans ``Int.nonNeg_of_nat_le,
           mkTrans ``nat_gt_prop,
           mkTrans ``nat_ge_prop,
           mkTrans ``nat_not_eq_prop (some 3),

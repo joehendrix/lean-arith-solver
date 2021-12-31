@@ -145,7 +145,8 @@ def matchIntLit (e:Expr) : MetaM (Option Int) := do
 theorem add_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + m*y = c) : a + m*(x+y) = c := by
   rw [h.symm, g.symm, Int.mul_add, Int.add_assoc]
 theorem sub_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + -m*y = c) : a + m*(x-y) = c := by
-  rw [h.symm, g.symm, Int.mul_sub, Int.add_assoc, Int.sub_to_add_neg, Int.neg_mul]
+  rw [h.symm, g.symm]
+  rw [Int.sub_to_add_neg, Int.mul_add, Int.mul_neg, Int.add_assoc]
 theorem neg_poly_lemma {m x a b:Int}  (g : a + (-m)*x = b) : a + m*(-x) = b := by
   rw [g.symm, Int.mul_neg]
 

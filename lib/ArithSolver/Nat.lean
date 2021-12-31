@@ -72,4 +72,10 @@ protected
 theorem succ_sub {x y :Nat} (p:y ≤ x) : Nat.succ (x - y) = Nat.succ x - y := by
   admit
 
+theorem mul_sub (x y z:Nat) : x * (y - z) = x * y - x * z := sorry
+
+theorem add_sub_add_self (x y z : Nat) : (x + z) - (y + z) = x - y := sorry
+
+theorem succ_pred {x:Nat} (p:x > 0) : succ (pred x) = x := sorry
+
 end Nat

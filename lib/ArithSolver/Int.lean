@@ -13,16 +13,16 @@ section subNatNat
 private
 theorem subNatNat.is_ofNat {x y:Nat} (p:y ≤ x) : subNatNat x y = ofNat (x - y) := by
   simp [subNatNat]
-  have h:y -x = 0 := Nat.sub_is_zero_is_le.mp p
+  have h : y - x = 0 := by simp only [Nat.sub_is_zero_is_le, p]
   simp [h]
 
 private theorem subNatNat.is_negSucc {x y:Nat} (p:x < y) : subNatNat x y = negSucc (y - Nat.succ x) := by
   generalize g: y - x = y_sub_x
   cases y_sub_x with
   | zero =>
-    have h : y ≤ x := Nat.sub_is_zero_is_le.mpr g
-    have q : ¬(y ≤ x) := Nat.not_le_of_gt p
-    contradiction
+    have h : Nat.zero = 0 := rfl
+    simp only [h, Nat.sub_is_zero_is_le] at g
+    exact (False.elim (Nat.not_le_of_gt p g))
   | succ y_sub_x =>
     simp only [subNatNat, g, Nat.sub_succ, Nat.pred]
 
@@ -54,44 +54,31 @@ private
 theorem subNatNat_sub_lhs (p : x ≥ y) (z:Nat) : subNatNat (x - y) z = subNatNat x (y + z) := by
   match Nat.lt_or_ge x (y+z) with
   | Or.inr q =>
-    have r : x-y ≥ z := by
-          simp only [Nat.sub_is_zero_is_le]
-          simp only [Nat.sub_sub_rassoc _ p, Nat.add_comm z y]
-          simp only [Nat.sub_is_zero_is_le] at q
-          exact q
+    have r : x - y ≥ z := by simp only [Nat.le_sub_simp p, Nat.add_comm]; exact q
     simp only [subNatNat.is_ofNat q, subNatNat.is_ofNat r]
-    simp only [Nat.sub_sub_lassoc]
+    simp only [Nat.sub_sub_left]
   | Or.inl q =>
-    have r : x-y < z := by
-          apply Nat.lt_of_succ_le
-          simp only [Nat.sub_is_zero_is_le]
-          simp only [Nat.succ_sub p, Nat.sub_sub_lassoc]
-          have s := Nat.succ_le_of_lt q
-          simp only [Nat.sub_is_zero_is_le] at s
-          exact s
+    have r : x - y < z := by simp only [Nat.sub_lt_simp p]; exact q
     simp only [subNatNat.is_negSucc q, subNatNat.is_negSucc r]
-    simp only [Nat.sub_succ]
-    simp only [Nat.sub_sub_rassoc _ p, Nat.add_comm z y]
+    simp only [negSucc.injEq, Nat.sub_succ]
+    simp only [Nat.sub_sub_right p]
+    rw [Nat.add_comm z y]
 
 private
 theorem subNatNat_sub {y z :Nat} (p : z ≤ y) (x:Nat) : subNatNat x (y - z) = subNatNat (x + z) y := by
   match Nat.lt_or_ge (x+z) y with
-  | Or.inl q =>
-    have r : Nat.succ x ≤ y - z := by
-      have q2 : Nat.succ (x+z) ≤ y := q
-      simp only [Nat.sub_is_zero_is_le, Nat.sub_sub_rassoc _ p, Nat.succ_add]
-      simp only [Nat.sub_is_zero_is_le] at q2
-      exact q2
-    simp only [subNatNat.is_negSucc q, subNatNat.is_negSucc r, Nat.sub_succ]
-    simp only [Nat.sub_sub_lassoc, Nat.add_comm]
   | Or.inr q =>
     have r : y - z ≤ x := by
-      simp [Nat.sub_is_zero_is_le]
-      simp [Nat.sub_is_zero_is_le] at q
-      simp [Nat.sub_sub_lassoc, Nat.add_comm z x]
+      simp only [Nat.sub_le_simp, Nat.add_comm z x]
       exact q
     simp only [subNatNat.is_ofNat q, subNatNat.is_ofNat r]
-    simp only [Nat.sub_sub_rassoc _ p]
+    simp only [Nat.sub_sub_right p]
+  | Or.inl q =>
+    have r : Nat.succ x ≤ y - z := by
+      simp only [Nat.le_sub_simp, p, Nat.succ_add]
+      exact q
+    simp only [subNatNat.is_negSucc q, subNatNat.is_negSucc r, Nat.sub_succ]
+    simp only [Nat.sub_sub_left, Nat.add_comm]
 
 private
 theorem subNatNat_zero_implies_equal {x y :Nat} (q:Int.subNatNat x y = 0) : x = y := by
@@ -101,7 +88,7 @@ theorem subNatNat_zero_implies_equal {x y :Nat} (q:Int.subNatNat x y = 0) : x = 
     cases z with
     | zero => rfl
     | succ z => simp [g] at q
-  simp [p, OfNat.ofNat] at q
+  simp only [OfNat.ofNat, p, ofNat.injEq] at q
   revert y
   induction x with
   | zero =>
@@ -177,12 +164,13 @@ theorem ofNat_add_subNatNat (x y z:Nat)
   : ofNat x + subNatNat y z = subNatNat (x + y) z := by
     match Nat.lt_or_ge y z with
     | Or.inl p =>
-      simp only [subNatNat.is_negSucc p, ofNat_add_negSucc, Nat.succ_sub p, Nat.succ_sub_succ]
-      simp only [subNatNat_sub (Nat.le_of_lt p)]
+      rw [subNatNat.is_negSucc p, ofNat_add_negSucc, Nat.succ_sub p, Nat.succ_sub_succ]
+      exact (subNatNat_sub (Nat.le_of_lt p) _)
     | Or.inr p =>
-      simp only [subNatNat.is_ofNat p, ofNat_add_ofNat]
       have q : x + y ≥ z := Nat.le_trans p (Nat.le_add_left y x)
-      simp only [subNatNat.is_ofNat q, Nat.add_sub _ p]
+      rw [subNatNat.is_ofNat p, ofNat_add_ofNat]
+      rw [subNatNat.is_ofNat q, ofNat.injEq]
+      exact (Nat.add_sub_right p _)
 
 private
 theorem subNatNat_add_ofNat (x y z:Nat) : subNatNat x y + ofNat z = subNatNat (x + z) y := by
@@ -190,26 +178,17 @@ theorem subNatNat_add_ofNat (x y z:Nat) : subNatNat x y + ofNat z = subNatNat (x
 
 private
 theorem negSucc_add_subNatNat (x y z:Nat) : negSucc x + subNatNat y z = subNatNat y (Nat.succ (x + z)) := by
-  simp [subNatNat]
-  generalize g:z-y=j
-  cases j with
-  | zero =>
-    simp [negSucc_add_ofNat, subNatNat]
-    have h : z ≤ y := Nat.sub_is_zero_is_le.mpr g
-    have p := Nat.sub_sub_rassoc (Nat.succ x) h
-    have q := Nat.sub_sub_lassoc
-    have r := Nat.add_comm z (Nat.succ x)
-    simp [p, Nat.succ_add, q, r]
-  | succ j =>
-    rw [negSucc_add_negSucc]
-    have p : Nat.succ (x + j) = x + (z- y) := by
-      simp [(Nat.add_succ _ _).symm, g.symm]
-    rw [p]
-    have q :  Nat.succ (x + z) - y = Nat.succ (x + (z - y)) := by
-      have h : y ≤ z := Nat.le_of_lt (Nat.lt_of_sub_succ g)
-      have h2 : y ≤ x + z := Nat.le_trans h (Nat.le_add_left z x)
-      simp [Nat.add_sub _ h, Nat.succ_sub h2]
-    simp [q]
+  match Nat.lt_or_ge y z with
+  | Or.inr p =>
+    rw [subNatNat.is_ofNat p, negSucc_add_ofNat]
+    simp only [subNatNat_sub_lhs p, Nat.add_succ, Nat.add_comm]
+  | Or.inl p =>
+    rw [subNatNat.is_negSucc p, negSucc_add_negSucc]
+    have r : y < x + z := Nat.le_trans p (Nat.le_add_left z x)
+    have q : y < Nat.succ (x + z) := Nat.le.step r
+    rw [subNatNat.is_negSucc q, negSucc.injEq]
+    rw [Nat.add_sub_right p]
+    rw [Nat.succ_sub r]
 
 private
 theorem subNatNat_add_negSucc (x y z:Nat)
@@ -224,28 +203,27 @@ private theorem subNatNat_add_subNatNat (a b c d:Nat)
     match Nat.lt_or_ge c d with
     | Or.inr c_ge_d =>
       have ge : a + c ≥ b + d := Nat.add_le_add a_ge_b c_ge_d
-      simp only [subNatNat.is_ofNat c_ge_d, subNatNat.is_ofNat ge]
-      simp only [ofNat_add_ofNat]
-      simp only [Nat.sub_add_lassoc a_ge_b]
-      simp only [Nat.add_sub _ c_ge_d]
-      simp only [Nat.sub_sub_lassoc, Nat.add_comm]
+      rw [subNatNat.is_ofNat c_ge_d, subNatNat.is_ofNat ge]
+      rw [ofNat_add_ofNat, ofNat.injEq]
+      rw [Nat.add_sub_left a_ge_b]
+      rw [Nat.add_sub_right c_ge_d]
+      simp only [Nat.sub_sub_left, Nat.add_comm]
     | Or.inl c_lt_d =>
       simp only [subNatNat.is_negSucc c_lt_d]
       simp only [ofNat_add_negSucc]
       simp only [Nat.succ_sub c_lt_d, Nat.succ_sub_succ]
       simp only [subNatNat_sub (Nat.le_of_lt c_lt_d)]
-      simp only [Nat.sub_add_lassoc a_ge_b]
+      simp only [Nat.add_sub_left a_ge_b]
       have ac_ge_b : a+c ≥ b := Nat.le_trans a_ge_b (Nat.le_add_right a c)
       simp only [subNatNat_sub_lhs ac_ge_b]
   | Or.inl a_lt_b =>
     simp only [subNatNat.is_negSucc a_lt_b]
     match Nat.lt_or_ge c d with
     | Or.inr c_ge_d =>
-      simp only [subNatNat.is_ofNat c_ge_d]
-      simp only [negSucc_add_ofNat]
+      simp only [subNatNat.is_ofNat c_ge_d, negSucc_add_ofNat]
       simp only [Nat.succ_sub a_lt_b, Nat.succ_sub_succ]
       simp only [subNatNat_sub_lhs c_ge_d]
-      simp only [Nat.add_sub _ (Nat.le_of_lt a_lt_b)]
+      simp only [Nat.add_sub_right (Nat.le_of_lt a_lt_b)]
       have db_ge_a : d + b >= a :=
              Nat.le_trans (Nat.le_of_lt a_lt_b) (Nat.le_add_left b d)
       simp only [subNatNat_sub db_ge_a]
@@ -253,20 +231,17 @@ private theorem subNatNat_add_subNatNat (a b c d:Nat)
     | Or.inl c_lt_d =>
       have lt : a + c < b + d := Nat.add_lt_add a_lt_b c_lt_d
       simp only [subNatNat.is_negSucc c_lt_d, subNatNat.is_negSucc lt]
-      simp only [negSucc_add_negSucc]
-      simp only [Nat.sub_add_lassoc a_lt_b]
-      simp only [Nat.add_sub _ c_lt_d]
-      simp only [Nat.sub_sub_lassoc, Nat.succ_add, Nat.add_succ, Nat.add_comm c a]
-      rw [Nat.sub_succ]
-      have gt0 : b + d - Nat.succ (a + c) > 0 := by
+      rw [negSucc_add_negSucc, negSucc.injEq]
+      simp only [Nat.add_sub_left a_lt_b]
+      simp only [Nat.add_sub_right c_lt_d]
+      simp only [Nat.sub_sub_left, Nat.succ_add, Nat.add_succ, Nat.add_comm c a]
+      rw [Nat.sub_succ, Nat.sub_succ]
+      have gt1 : Nat.pred (b + d - (a + c)) > 0 := by
             apply Nat.lt_of_succ_le
-            simp only [Nat.sub_is_zero_is_le]
-            simp only [Nat.sub_sub_rassoc _ lt, Nat.succ_add, Nat.zero_add]
-            simp only [(Nat.add_succ a c).symm]
-            simp only [Nat.sub_is_zero_is_le.symm]
-            simp only [(Nat.succ_add a _).symm]
+            simp only [Nat.succ_le_pred, Nat.succ_le_sub, Nat.succ_add, Nat.zero_add]
+            rw [(Nat.add_succ _ c).symm, (Nat.succ_add a _).symm]
             exact Nat.add_le_add a_lt_b c_lt_d
-      simp only [Nat.succ_pred gt0]
+      simp only [Nat.succ_pred gt1]
 
 theorem add_assoc (x y z : Int) : x + y + z = x + (y + z) := by
   cases x <;> cases y <;> cases z <;>  simp only
@@ -305,14 +280,13 @@ theorem neg_subNatNat (m n: Nat) : - (subNatNat m n) = subNatNat n m := by
   | Or.inl p =>
     have q : m ≤ n := Nat.le_of_lt p
     simp only [subNatNat.is_negSucc p, subNatNat.is_ofNat q, neg_negSucc]
-    simp only [Nat.sub_add_lassoc p, Nat.succ_sub_succ]
+    simp only [Nat.add_sub_left p, Nat.succ_sub_succ]
   | Or.inr p =>
     simp only [subNatNat.is_ofNat p, neg_ofNat]
     simp only [subNatNat_sub p, Nat.zero_add]
 
 theorem neg_add (x y : Int) : -(x + y) = -x + -y := by
-  cases x <;> cases y <;>
-    simp only
+  cases x <;> cases y <;> simp only
          [ofNat_add_ofNat, ofNat_add_negSucc, negSucc_add_ofNat, negSucc_add_negSucc,
           neg_ofNat, neg_negSucc,
           subNatNat_add_subNatNat, subNatNat_add_ofNat, ofNat_add_subNatNat,
@@ -344,9 +318,7 @@ theorem sub_eq_zero_implies_eq {x y : Int} (q : x - y = 0) : x = y := by
       simp only [q]
     | negSucc y =>
       simp only [sub_to_add_neg, neg_negSucc, ofNat_add_ofNat] at q
-      apply Int.noConfusion q
-      intro r
-      apply Nat.noConfusion r
+      simp only [Nat.add_succ, OfNat.ofNat, ofNat.injEq] at q
   | negSucc x =>
     cases y with
     | ofNat y =>
@@ -363,15 +335,16 @@ protected theorem lt_or_ge (x y : Int) : x < y ∨ x ≥ y := by
   have succ_le : ∀(a b), (Nat.succ a ≤ b) = (a < b) := by
         intros a b
         exact propext (Iff.intro id id)
-  simp [LT.lt, Int.lt, LE.le, GE.ge, Int.le, sub_to_add_neg, neg_add, h]
-  cases x <;> cases y <;> simp
+  simp only [LT.lt, Int.lt, LE.le, GE.ge, Int.le, sub_to_add_neg, neg_add, h]
+  cases x <;> cases y <;> simp only
     [ neg_ofNat, neg_negSucc,
       ofNat_add_ofNat, ofNat_add_negSucc, ofNat_add_subNatNat,
       negSucc_add_ofNat, negSucc_add_subNatNat, subNatNat_add_negSucc,
       NonNeg.mk,
       succ_subNatNat_succ, subNatNat_zero,
       Nat.add_zero, Nat.add_succ,
-      nonNeg_subNatNat, succ_le, Nat.lt_or_ge
+      nonNeg_subNatNat, succ_le, Nat.lt_or_ge,
+      or_true, true_or
     ]
 
 section Multiplication
@@ -419,10 +392,10 @@ theorem ofNat_mul_subNatNat (x y z : Nat) : ofNat x * subNatNat y z = subNatNat 
       have q : x*y < x*z := Nat.mul_lt_mul_of_pos_left p x_pos
       simp only [subNatNat.is_negSucc p, subNatNat.is_negSucc q, ofNat_mul_negSucc]
       have r : x * z ≥ (x * y + x) := by
-        simp [(Nat.mul_succ x y).symm]
+        simp only [(Nat.mul_succ x y).symm]
         exact Nat.mul_le_mul_left x p
       simp only [
-        Nat.sub_add_lassoc r,
+        Nat.add_sub_left r,
         Nat.mul_succ, Nat.mul_sub,  Nat.add_sub_add_self ]
       rw [subNatNat_sub (Nat.le_of_lt q), Nat.zero_add, subNatNat.is_negSucc q]
 
@@ -535,13 +508,13 @@ theorem mul_ne_zero {x y:Int} : x ≠ 0 → y ≠ 0 → x * y ≠ 0 :=
   match x, y with
   | ofNat 0, y  => by
     intro ne
-    simp only [] at ne
+    contradiction
   | _, 0 => by
     intro _ ne
     simp only [] at ne
   | ofNat (Nat.succ x), ofNat (Nat.succ y) => by
     intros p q
-    simp [ofNat_mul_ofNat, Nat.succ_mul, Nat.add_succ, OfNat.ofNat]
+    simp only [ofNat_mul_ofNat, Nat.succ_mul, Nat.add_succ, OfNat.ofNat, ne_eq, ofNat.injEq]
   | ofNat (Nat.succ x), negSucc y => by
     intros p q eq
     simp only [ofNat_mul_negSucc, negOfNat_is_subNatNat] at eq
@@ -553,7 +526,7 @@ theorem mul_ne_zero {x y:Int} : x ≠ 0 → y ≠ 0 → x * y ≠ 0 :=
     simp only [Nat.succ_mul, Nat.add_succ, OfNat.ofNat] at eq
   | negSucc x, negSucc y => by
     intros p q
-    simp [negSucc_mul_negSucc, Nat.succ_mul, Nat.add_succ, OfNat.ofNat]
+    simp only [negSucc_mul_negSucc, Nat.succ_mul, Nat.add_succ, OfNat.ofNat, ne_eq, ofNat.injEq]
 
 end NeZero
 

@@ -273,10 +273,8 @@ theorem purifyIntLemmaVar {x y:Int} (p:0 + 1 * x = 1 * y) : x = y :=
 -- the expression.  It produces a variable along with a proof that
 -- e = v.expr
 def purifyIntExpr (e:Expr) : ArithM (Var × Expr) := do
-  have g : 1 ≠ 0 := by
-    apply Nat.noConfusion
-  have one_ne : (1:Int) ≠ 0 := λx => Int.noConfusion x g
   let e ← instantiateMVars e
+  have one_ne : (1:Int) ≠ 0 := by simp only [ne_eq]
   let (p,pr) ← appendAddExprFromInt 1 one_ne e Poly.zero
   -- pr  has type" 0 + 1 * e = p.expr"
   match p with

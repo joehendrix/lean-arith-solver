@@ -16,23 +16,14 @@ private def ofNatExpr : Expr := mkConst ``Int.ofNat
 private def intNonNegMkExpr : Expr := mkConst ``Int.NonNeg.mk
 private def propExpr : Expr := mkSort levelZero
 
--- | Given a proposition equivalent to λ(x:P) => False, this returns type p
-def parseNegatedGoal (tactic:Name) (goalId:MVarId) (ptp:Expr) : MetaM Expr := do
-  match ptp with
-  | Expr.forallE an atp (Expr.const ``False _ _) ad => do
-    pure atp
-  | Expr.app (Expr.const ``Not [] _) atp _ => do
-    pure atp
-  | _ =>
-    throwTacticEx tactic goalId m!"Expected negation input goal to be False instance of {indentExpr ptp}"
-
 def falseExpr : Expr := mkConst ``False
 
 structure Goal where
   -- Given a proof from the solver
   onMkProof : Expr → Expr
 
-def Goal.onAddAssumptions (g:Goal) (goalId:MVarId) (s:State) : MetaM (List MVarId) := do
+def Goal.onAddAssumptions (tactic:Name) (g:Goal) (goalId:MVarId) (s:State) : MetaM (List MVarId) := do
+  checkNotAssigned goalId tactic
   let tag   ← getMVarTag goalId
   let lctx ← getLCtx
   let (lctx, fvars) ← s.addAssertions lctx
@@ -57,9 +48,9 @@ structure Transformer where
   resultType : Expr
 
 -- | This constructs a transformer from a term denoing an inference rule.
-def mkTransformer (proof:Expr) (maxVars?:Option Nat): MetaM Transformer := do
+def mkTransformer (proof:Expr) : MetaM Transformer := do
   -- Get variables and type of proof
-  let (vars, binders, resultType) ← forallMetaTelescopeReducing (← inferType proof) maxVars?
+  let (vars, binders, resultType) ← forallMetaTelescope (← inferType proof)
   if vars.size = 0 then
     throwError m!"Expected predicate with at least one argument {indentExpr proof}."
   let avar := vars.back.mvarId!
@@ -76,7 +67,6 @@ def resolveTransformerArgs (proofExpr:Expr) (t:Transformer) : MetaM Bool := do
   for v in t.arguments, b in t.binders do
     if ← isExprMVarAssigned v.mvarId! then
       continue
-    let tp := ← inferType v
     match b with
     | BinderInfo.instImplicit =>
       -- Synthesize class instance
@@ -151,17 +141,19 @@ theorem int_eq_prop (x y : Int) (p : x = y)
   : x - y = 0 := by simp [p, Int.sub_self]
 
 theorem nat_eq_prop {x y : Nat} (p : x = y)
-  : (OfNat.ofNat x : Int) - OfNat.ofNat y = 0 := by
-    apply int_eq_prop; rw [p]
+  : @OfNat.ofNat Int x _ - OfNat.ofNat y = 0 := by
+    apply int_eq_prop
+    simp only [OfNat.ofNat, p]
 
 theorem int_not_eq_prop {x y : Int} (p : ¬(x = y))  : ¬(x - y = 0) := by
   intro q
   apply p (Int.sub_eq_zero_implies_eq q)
 
 theorem nat_not_eq_prop {x y : Nat} (p : ¬(x = y))
-  : ¬(Int.ofNat x - Int.ofNat y = 0) := by
+  : ¬(@OfNat.ofNat Int x _ - OfNat.ofNat y = 0) := by
   apply int_not_eq_prop
-  simp [p]
+  simp only [OfNat.ofNat, Int.ofNat.injEq]
+  exact p
 
 end PredicateNormalizationLemmas
 
@@ -178,9 +170,8 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
   | none => pure ()
   | some e =>
     let (v, pr) ← purifyIntExpr e
-    IO.println s!"Asserting non neg:\n  proof = {←instantiateMVars proof}"
-    let proof2 := mkAppN (mkConst ``intNonNeg_lemma) #[e, ← varExpr v, pr, proof]
-    return (some (proof2, Pred.IsGe0 v))
+    let proof := mkAppN (mkConst ``intNonNeg_lemma) #[e, ← varExpr v, pr, proof]
+    return (some (proof, Pred.IsGe0 v))
   -- Check if prop match (e = Int.ofNat 0)
   match ← matchIntEq0 prop with
   | none => pure ()
@@ -194,15 +185,15 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
     let (v, pr) ← purifyIntExpr e
     let proof := mkAppN (mkConst ``intNe0_lemma) #[e, ← varExpr v, pr, proof]
     return (some (proof, Pred.IsNe0 v))
-  let mkTrans (nm:Name) (m:optParam (Option Nat) none) : Expr × Option Nat := (mkConst nm, m)
+  let mkTrans (nm:Name) : Expr := mkConst nm
   -- Create list of transformers to apply
-  let transformers : Array (Expr × Option Nat) := #[
+  let transformers : Array Expr := #[
           mkTrans ``nat_eq_prop,
           mkTrans ``nat_lt_prop,
           mkTrans ``Int.nonNeg_of_nat_le,
           mkTrans ``nat_gt_prop,
           mkTrans ``nat_ge_prop,
-          mkTrans ``nat_not_eq_prop (some 3),
+          mkTrans ``nat_not_eq_prop,
           mkTrans ``nat_not_lt_prop,
           mkTrans ``nat_not_le_prop,
           mkTrans ``nat_not_gt_prop,
@@ -212,7 +203,7 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
           mkTrans ``int_le_prop,
           mkTrans ``int_gt_prop,
           mkTrans ``int_ge_prop,
-          mkTrans ``int_not_eq_prop (some 3),
+          mkTrans ``int_not_eq_prop,
           mkTrans ``int_not_lt_prop,
           mkTrans ``int_not_le_prop,
           mkTrans ``int_not_gt_prop,
@@ -220,14 +211,13 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
         ]
   let mut found : Option (Expr × Expr) := none
   -- Iterate through list looking for first match
-  for (rule,max) in transformers do
+  for rule in transformers do
     -- Get variables and type of proof
-    let t ← mkTransformer rule max
+    let t ← mkTransformer rule
     unless ← isDefEq t.assumptionType prop do
       continue
     unless ← resolveTransformerArgs rule t do
       continue
-    IO.println s!"Applying {rule}:\n  Args: {t.arguments}\n  Proof: {proof}"
     found := (mkApp (mkAppN rule t.arguments) proof, t.resultType)
     break
   match found with
@@ -238,12 +228,13 @@ partial def extractPropPred (proof:Expr) (prop:Expr) : ArithM (Option (Expr × P
 
 -- | See if we can add the local declaration to the arithmetic unit.
 -- proof is a term of type prop.
-def processAssumptionProp (origin : Option FVarId) (name:Name) (proof:Expr) (prop:Expr) : ArithM Unit := do
+def processAssumptionProp (origin : Option FVarId) (name:Name) (proof:Expr) (prop:Expr) : ArithM Bool := do
   match ← extractPropPred proof prop with
   | none => do
-    pure ()
+    pure false
   | some (proof, pred) => do
     assertPred origin name proof pred
+    pure true
 
 def processDecls (lctx:LocalContext) : ArithM Unit := do
   let mut seenFirst := false
@@ -272,51 +263,61 @@ def processDecls (lctx:LocalContext) : ArithM Unit := do
       continue
     -- If this is a proposition then try assuming it.
     if ← isDefEq (← inferType d.type) propExpr then do
-      processAssumptionProp (some d.fvarId) d.userName (mkFVar d.fvarId) d.type
+      let _ ← processAssumptionProp (some d.fvarId) d.userName (mkFVar d.fvarId) d.type
 
 -- Negating goal
 
-theorem decidable_by_contra {P:Prop} [h:Decidable P] (q : ∀(ng:¬ P), False) : P :=
+theorem decidable_by_contra {P:Prop} [h:Decidable P] (q : ¬¬P) : P :=
   match h with
   | isFalse h => False.elim (q h)
   | isTrue h => h
 
-def negateArithGoal (tactic:Name) (goalId:MVarId) : ArithM Goal := do
-  let md ← getMVarDecl goalId
-  processDecls md.lctx
-  if ← isDefEq md.type falseExpr then
+def analyzeGoal (tactic:Name) (goalId:MVarId) (target:Expr) : ArithM Goal := do
+  -- If goal is already false, then just negate it.
+  if ← isDefEq target falseExpr then
     return { onMkProof := id }
-  match ← matchNot md.type with
-  | none => pure ()
+
+  -- If goal has form `Not p` then we can diretly process property.
+  match ← matchNot target with
   | some prop => do
-    processAssumptionProp none `negGoal (mkBVar 0) prop
-    -- Create verification
-    return { onMkProof := mkLambda Name.anonymous BinderInfo.default prop }
-  let decideByContraExpr := mkConst ``decidable_by_contra
-  let target := md.type
-  -- Get variables and type of proof
-  let t ← mkTransformer decideByContraExpr none
-  unless ← isDefEq t.resultType target do
-    throwTacticEx tactic goalId m!"Goal must be a proposition."
-  unless ← resolveTransformerArgs decideByContraExpr t do
-    throwTacticEx tactic goalId m!"Unexpected decidable "
-  let decideByContraExpr := mkAppN decideByContraExpr t.arguments
-  -- Get negated goal from assumption type
-  let prop ← parseNegatedGoal tactic goalId t.assumptionType
-  -- Pvar is a metavariable of type "prop -> False"
-  processAssumptionProp none `negGoal (mkBVar 0) prop
-  pure $ {
-      onMkProof := fun goalProof =>
-        mkApp decideByContraExpr (mkLambda Name.anonymous BinderInfo.default prop goalProof)
-      }
+    if ← processAssumptionProp none `negGoal (mkBVar 0) prop then
+      return { onMkProof := mkLambda Name.anonymous BinderInfo.default prop }
+  -- Goal is not a negation, so we seeing if we can extract a predicate from
+  -- negated goal and then use decidable_by_contra to get proof of negation
+  -- of target.
+  | none =>
+    let prop := mkApp (mkConst ``Not) target
+    if ← processAssumptionProp none `negGoal (mkBVar 0) prop then
+      let some classVal ← synthInstance? (mkApp (mkConst ``Decidable) target)
+          | throwTacticEx tactic goalId "Could not synthesize Decidable instance for proposition:."
+      let decideByContraExpr := mkAppN (mkConst ``decidable_by_contra) #[target, classVal]
+      return {
+          onMkProof := fun goalProof =>
+            mkApp decideByContraExpr (mkLambda Name.anonymous BinderInfo.default prop goalProof)
+          }
+
+  -- In final case, we just ignore the goal and try to prove a contradiction from assumptions
+  -- alone.
+  match ← inferType target with
+  | Expr.sort lvl _ =>
+    pure { onMkProof := fun goalProof =>
+      mkAppN (mkConst ``False.elim [lvl]) #[target, goalProof]
+    }
+  | _ =>
+    throwTacticEx tactic goalId "Expected a type."
+
+def mkArithGoal (tactic:Name) (goalId:MVarId) : MetaM (Goal × State) := ArithM.run do
+  withMVarContext goalId do
+    let md ← getMVarDecl goalId
+    processDecls md.lctx
+    analyzeGoal tactic goalId md.type
 
 syntax (name := to_poly) "to_poly" : tactic
 
 @[tactic to_poly] def evalToPoly : Tactic := fun stx => do
   liftMetaTactic fun mvarId => do
-    checkNotAssigned mvarId `zify
-    let (goal, s) ← (negateArithGoal `zify mvarId).run
-    let r@([goalId]) ← goal.onAddAssumptions mvarId s
+    let (goal, s) ← mkArithGoal `to_poly mvarId
+    let r@([goalId]) ← goal.onAddAssumptions `to_poly mvarId s
       | throwError "Expected more goals"
     pure r
 

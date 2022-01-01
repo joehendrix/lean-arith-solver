@@ -421,6 +421,15 @@ private
 theorem subNatNat_mul_negSucc (x y z : Nat) : subNatNat x y * negSucc z = subNatNat (y * Nat.succ z) (x * Nat.succ z)  := by
   simp [mul_comm, negSucc_mul_subNatNat, Nat.mul_comm]
 
+theorem neg_one_mul (x:Int) : -1 * x = -x := by
+  simp only [OfNat.ofNat]
+  have h : Nat.succ 0 = 1 := rfl
+  cases x <;> simp only
+    [neg_ofNat, negSucc_mul_ofNat, negSucc_mul_negSucc, h, neg_negSucc,
+     subNatNat_mul_ofNat, subNatNat_mul_negSucc,
+     Nat.zero_mul, Nat.one_mul, subNatNat_zero
+     ]
+
 theorem mul_assoc (x y z : Int) : x * y * z = x * (y * z) := by
   cases x <;> cases y <;> cases z <;> simp only
     [ ofNat_mul_ofNat, ofNat_mul_negSucc, negSucc_mul_ofNat, negSucc_mul_negSucc,

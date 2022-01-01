@@ -178,12 +178,12 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
         pure (poly, pr)
       else
         let y := m * x
-        -- p + m * x * 1 = return
+        -- pr: poly + m * x * 1 = r
         let pr ← polyAddProof poly y (Int.mul_ne_zero m_ne x_ne) Var.one
-        pure (poly.add y Var.one, pr)
+        return (poly.add y Var.one, pr)
     return r
 
-  -- Match add
+  -- Match addition
   match ← matchBinOp intAddConst intExpr e with
   | none => pure ()
   | some (x, y) => do
@@ -196,11 +196,8 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
     return (poly, pr)
 
   -- Match sub
---  let subExpr := mkAppN (mkConst ``Sub.sub [levelZero]) #[intExpr, mkConst ``Int.instSubInt]
---  let subExpr := mkConst ``Int.sub
   match ← matchBinOp intSubConst intExpr e with
-  | none =>
-    pure ()
+  | none => pure ()
   | some (x, y) => do
     let aexpr ← polyExpr poly
     let (poly, x_pr) ← appendAddExprFromInt m m_ne x poly
@@ -212,7 +209,7 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
 
   -- Match negation
   let negExpr := mkAppN (mkConst ``Neg.neg [levelZero]) #[intExpr, mkConst ``Int.instNegInt]
-  match ← matchUnaryOp negExpr intExpr e with
+  match ← matchUnaryOp intNegConst intExpr e with
   | none => pure ()
   | some x => do
     let aexpr ← polyExpr poly
@@ -225,11 +222,11 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
   match ← matchBinOp intMulConst intExpr e with
   | none => pure ()
   | some (x, y) => do
-    let aexpr ← polyExpr poly
+    -- Match first term is int literal.
     match ← matchIntLit x with
-    | none =>
-      pure ()
+    | none => pure ()
     | some xn =>
+      let aexpr ← polyExpr poly
       let r ←
         if xn_ne:xn = 0 then
           let pr := mkAppN (mkConst ``mul_zero_lhs_poly_lemma) #[m, y, aexpr]
@@ -242,10 +239,11 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
           let pr := mkAppN (mkConst ``mul_lhs_poly_lemma) #[m, x, y, aexpr, bexpr]
           pure (poly, pr)
       return r
+    -- Match second term is int literal.
     match ← matchIntLit y with
-    | none =>
-      pure ()
+    | none => pure ()
     | some yn =>
+      let aexpr ← polyExpr poly
       let r ←
         if n_ne:yn = 0 then
           let pr := mkAppN (mkConst ``mul_zero_rhs_poly_lemma) #[m, x, aexpr]
@@ -256,7 +254,6 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly)
           let pr := mkAppN (mkConst ``mul_rhs_poly_lemma) #[m, x, y, aexpr, bexpr]
           pure (poly, pr)
       return r
-    pure ()
 
   let v ← getUninterpVar (← instantiateMVars e)
   let pr ← polyAddProof poly m m_ne v

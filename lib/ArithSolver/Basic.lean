@@ -6,30 +6,91 @@ import Std.Data.HashMap
 import Lean.Meta
 import ArithSolver.Array
 
-open Lean (Expr FVarId Name)
+open Lean
 open Std (HashMap)
 
 namespace ArithSolver
 
--- | A variabe
-structure Var where
-  (index : UInt32)
+-- | A theory variable
+structure TheoryVar where
+  index : UInt32
   deriving BEq, Hashable, Repr
+
+namespace TheoryVar
+
+protected def ofNat (n:Nat) :TheoryVar := ⟨UInt32.ofNat n⟩
+
+protected def toNat (v:TheoryVar) : Nat := v.index.toNat
+
+instance : Inhabited TheoryVar := ⟨⟨0⟩⟩
+
+protected def toString (v:TheoryVar) : String := "v" ++ toString v.index
+
+instance : ToString TheoryVar where
+  toString := TheoryVar.toString
+
+instance : LT TheoryVar where
+  lt a b := LT.lt a.index b.index
+
+instance (a b : TheoryVar) : Decidable (LT.lt a b) :=
+  inferInstanceAs (Decidable (LT.lt a.index b.index))
+
+end TheoryVar
+
+-- | A theory predicate
+structure TheoryPred where
+  index : UInt32
+
+namespace TheoryPred
+
+def ofNat (n:Nat) : TheoryPred := ⟨UInt32.ofNat n⟩
+
+def toNat (p:TheoryPred) : Nat := p.index.toNat
+
+def max : Nat := UInt32.size
+
+protected def toString (v:TheoryPred) : String := "p" ++ toString v.index
+
+instance : ToString TheoryPred := ⟨TheoryPred.toString⟩
+
+end TheoryPred
+
+-- | A reference to a solver for a specific theory.
+structure TheoryRef where
+  index : UInt8
+  deriving DecidableEq
+
+namespace TheoryRef
+
+protected def toNat (r:TheoryRef) : Nat := r.index.toNat
+
+protected def max : TheoryRef := ⟨16⟩
+protected def uninterpreted : TheoryRef := ⟨0⟩
+
+protected def toString (v:TheoryRef) : String := "t" ++ toString v.index
+
+instance : ToString TheoryRef := ⟨TheoryRef.toString⟩
+
+end TheoryRef
+
+-- | A variable that is a theory variable in a specific theory.
+structure Var where
+  (index : UInt64)
+  deriving BEq, Hashable, Inhabited, Repr
 
 namespace Var
 
--- | "Variable" that denotes constant one.
-protected def one : Var := ⟨0⟩
+protected def mkVar (t:TheoryRef) (r:TheoryVar) : Var :=
+  ⟨OfNat.ofNat (r.index <<< (4:UInt32)).toNat ||| OfNat.ofNat t.index.toNat⟩
 
-instance : OfNat Var 1 := ⟨Var.one⟩
+protected def theory (v:Var) : TheoryRef := ⟨OfNat.ofNat (v.index &&& 0xf).toNat⟩
 
-protected def toString : Var → String
-| ⟨0⟩ => "one"
-| ⟨v⟩ => "v" ++ toString v
+protected def theoryVar (p:Var) : TheoryVar := ⟨OfNat.ofNat (p.index >>> (4:UInt64)).toNat⟩
+
+protected def toString (v:Var) : String :=
+  toString (v.theoryVar) ++ ":" ++ toString (v.theory)
 
 instance : ToString Var := ⟨Var.toString⟩
-
-instance : Inhabited Var := ⟨Var.one⟩
 
 instance : LT Var where
   lt a b := LT.lt a.index b.index
@@ -39,113 +100,57 @@ instance (a b : Var) : Decidable (LT.lt a b) :=
 
 end Var
 
--- | An atomic predicate
-inductive Pred where
--- This denotes a proof of the form (v = 0)
-| IsEq0 : Var → Pred
--- This denotes a proof of the form (Not (v = 0))
-| IsNe0 : Var → Pred
--- This denotes a proof of the form (Int.NonNeg v)
-| IsGe0 : Var → Pred
+structure Pred where
+  index : UInt64
+  deriving Inhabited
 
--- Represents a polynomial.
-structure Poly where
-  -- Poly should be a sorted array of non-zero integers and variable pairs.
-  -- The
-  elements : Array (Int × Var)
-  deriving BEq, Hashable, Repr
+namespace Pred
 
-namespace Poly
+protected def mkPred (t:TheoryRef) (r:TheoryPred) : Pred :=
+  ⟨OfNat.ofNat (r.index <<< (4:UInt32)).toNat ||| OfNat.ofNat t.index.toNat⟩
 
--- | Create polynomial denoting constant zero.
-def zero : Poly := ⟨#[]⟩
+def theory (p:Pred) : TheoryRef := ⟨OfNat.ofNat (p.index &&& 0xf).toNat⟩
 
-instance : Inhabited Poly := ⟨zero⟩
+def theoryPred (p:Pred) : TheoryPred := ⟨OfNat.ofNat (p.index >>> (4:UInt64)).toNat⟩
 
--- | Create polynomial denoting constant zero.
-def one : Poly := ⟨#[(1, Var.one)]⟩
+protected def toString (p:Pred) : String :=
+  toString (p.theoryPred) ++ ":" ++ toString (p.theory)
 
--- | @add p i _ v@ returns poly denoting @p + i*v@.
-def add : ∀(p:Poly) (m:Int), Var → Poly
-| ⟨a⟩, q, v =>
-  let rec loop : ∀(i : Nat), Poly
-      | 0 => ⟨a.insertAt 0 (q, v)⟩
-      | Nat.succ i =>
-        let (p,u) := a[i]
-        if u < v then
-          ⟨a.insertAt (i+1) (q,v)⟩
-        else if v < u then
-          loop i
-        else -- v = u
-          let q := p+q
-          if q = 0 then
-            ⟨a.eraseIdx i⟩
-          else
-            ⟨a.set! i (q,v)⟩
-  loop a.size
+instance : ToString Pred := ⟨Pred.toString⟩
 
-protected def toString : Poly → String
-| ⟨a⟩ =>
-  let scalarProd : Int × Var → String
-        | (m,v) => s!"{m}*{v}"
-  let firstScalarProd : Int × Var → String
-        | (m, ⟨0⟩) => toString m
-        | p => scalarProd p
-  let polyIns := λ(e:String) h => s!"{e} + {scalarProd h}"
-  a[1:].foldl polyIns (firstScalarProd a[0])
+end Pred
 
-instance : ToString Poly where
-  toString := Poly.toString
+structure ExprEvalResult (α:Type) where
+  -- The value
+  var : α
+  -- The expression that the variable will evaluate to.
+  varExpr : Expr
+  -- An equation showing the variable is equivalent.
+  eq : Expr
 
-end Poly
+structure SolverServices where
+  -- Return the expression associated with a variable.
+  varExpr {} : Var → IO Expr
+  -- Return a variable that interprets the expression as a constant
+  -- even if the head function belong to a theory.
+  --
+  -- Used for `OfNat.ofNat` constants and the arithmetic theory.
+  uninterpVar {} : Expr → MetaM Var
+  -- Return a variable associated with an expression that is not
+  -- interpeted by the current theory.
+  exprVar {} : Expr → MetaM (ExprEvalResult Var)
+  deriving Inhabited
 
--- | Assertion added
-structure Assertion where
-  -- Identifies the free variable in the initial context used to generate this one.
-  -- Used to allow deleting original proposition from local context.
-  origin : Option FVarId
-  -- The free variable used to identify the assertion in the local context
-  -- generated for the assertion.
-  name : Name
-  proof : Expr
-  prop : Pred
+abbrev SolverM := ReaderT SolverServices MetaM
 
--- def int1Lit : Expr := mkApp (mkConst ``Int.ofNat) (mkLit (Literal.natVal 1))
+def getVarForExpr (e:Expr) : SolverM (ExprEvalResult Var) := do
+  (← read).exprVar e
 
--- Definition associated with a variable.
-inductive Decl
-| uninterp : Expr → Decl
-| poly : Poly → Decl
-deriving BEq, Hashable
 
-namespace Decl
-
-protected def toString : Decl → String
-| uninterp e => s!"uninterp {e}"
-| poly p => s!"poly {p}"
-
-instance : ToString Decl where
-  toString := Decl.toString
-
-instance : Inhabited Decl := ⟨uninterp arbitrary⟩
-
-end Decl
-
-structure State where
-  -- Map from expressions (which should have type 'Int') to the theor
-  -- variable associated with it.
-  exprMap : HashMap Decl Var := Std.mkHashMap
-  -- Map from variables (which should have type 'Int') to the expression
-  -- associated with it.
-  varExprs : Array Decl := #[Decl.poly Poly.one]
-  -- Predicates asserted to be true.
-  assertions : Array Assertion := #[]
-
-namespace State
-
--- | Return proofs associated with assertions.
-def proofs (s:State) : Array Expr := s.assertions.map Assertion.proof
-
-end State
+structure TheoryOps where
+  exprVar : Expr → SolverM (ExprEvalResult TheoryVar)
+  varExpr : (Var → IO Expr) → TheoryVar → IO Expr
+  predExpr : (Var → IO Expr) → TheoryPred → IO Expr
+  deriving Inhabited
 
 end ArithSolver

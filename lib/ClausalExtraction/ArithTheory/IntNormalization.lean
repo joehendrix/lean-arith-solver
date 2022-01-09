@@ -2,12 +2,12 @@
 This contains the definitions related to numeric expression
 normalization.
 -/
-import ArithSolver.ArithM
+import ClausalExtraction.ArithTheory.ArithM
 
 open Lean
 open Lean.Meta
 
-namespace ArithSolver
+namespace ClausalExtraction
 
 namespace ArithTheory
 
@@ -293,7 +293,7 @@ theorem purifyIntLemmaVar {x y:Int} (p:0 + 1 * x = 1 * y) : x = y :=
 -- | This traverses an expression (which should have type int) to normalize
 -- the expression.  It produces a variable along with a proof that
 -- e = v.expr
-def purifyIntExpr (e:Expr) : ArithM (ExprEvalResult TheoryVar) := do
+def purifyIntExpr (e:Expr) : ArithM (VarDefinition TheoryVar) := do
   let e ← instantiateMVars e
   let one_ne : (1:Int) ≠ 0 := by simp only [ne_eq]
   let r ← appendAddExprFromInt 1 one_ne e Poly.zero
@@ -317,7 +317,6 @@ end Normalization
 def ops (r:IO.Ref State) : TheoryOps :=
   { varExpr := mthvarExpr r,
     predExpr := ArithTheory.predExpr r
-    exprVar := fun e => purifyIntExpr e r
   }
 
 section PredicateNormalizationLemmas
@@ -434,4 +433,4 @@ def matchNotIntEq0 (r:IO.Ref ArithTheory.State) (prop : Expr) : SolverM (Option 
   return (some (← getTheoryPred (Pred.IsNe0 res.var) r, proofFn))
 
 end ArithTheory
-end ArithSolver
+end ClausalExtraction

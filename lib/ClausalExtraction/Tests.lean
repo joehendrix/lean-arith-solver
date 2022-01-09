@@ -1,8 +1,8 @@
 /-Tests cases for zify
 -/
-import ArithSolver.ToPoly
+import ClausalExtraction.ToPoly
 
-open ArithSolver
+open ClausalExtraction
 
 -- Structure for test cases to hide theorems from to_poly
 structure Hide (P:Prop) := { value : P }
@@ -10,6 +10,7 @@ structure Hide (P:Prop) := { value : P }
 def test_false_goal (p:Hide False) : False := by
   to_poly
   exact p.value
+
 def test_uninterp_goal (p:Hide False) : Hide True := by
   to_poly
   exact p.value

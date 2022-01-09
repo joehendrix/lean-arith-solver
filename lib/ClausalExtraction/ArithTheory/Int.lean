@@ -1,7 +1,7 @@
 /-
 This defines additional operations used to normalize inequalitis.
 -/
-import ArithSolver.Nat
+import ClausalExtraction.ArithTheory.Nat
 
 namespace Int
 

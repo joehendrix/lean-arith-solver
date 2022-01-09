@@ -2,13 +2,13 @@
 This defines the ArithM monad basic operations used to generate a system of
 numerical equations from a Lean local context.
 -/
-import ArithSolver.Basic
-import ArithSolver.Int
+import ClausalExtraction.Basic
+import ClausalExtraction.ArithTheory.Int
 
-open Lean
+open Lean -- (Expr levelZero levelOne mkApp mkAppN mkConst mkRawNatLit)
 open Std (HashMap)
 
-namespace ArithSolver
+namespace ClausalExtraction
 
 namespace ArithTheory
 
@@ -283,4 +283,4 @@ def predExpr (r : IO.Ref State) (f : Var → IO Expr) (idx : TheoryPred) : IO Ex
 
 end ArithTheory
 
-end ArithSolver
+end ClausalExtraction

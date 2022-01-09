@@ -4,12 +4,12 @@ This module defines the state used to represent a system of linear integer equat
 -/
 import Std.Data.HashMap
 import Lean.Meta
-import ArithSolver.Array
+import ClausalExtraction.Array
 
-open Lean
+open Lean (Expr MetaM)
 open Std (HashMap)
 
-namespace ArithSolver
+namespace ClausalExtraction
 
 -- | A theory variable
 structure TheoryVar where
@@ -61,6 +61,8 @@ structure TheoryRef where
   deriving DecidableEq
 
 namespace TheoryRef
+
+protected def ofNat (n:Nat) : TheoryRef := ⟨UInt8.ofNat n⟩
 
 protected def toNat (r:TheoryRef) : Nat := r.index.toNat
 
@@ -120,14 +122,27 @@ instance : ToString Pred := ⟨Pred.toString⟩
 
 end Pred
 
-structure ExprEvalResult (α:Type) where
-  -- The value
+-- A variable, expression and equality proof returned from
+-- creating a variable.
+structure VarDefinition (α:Type) where
+  -- The value identifying the variable.
   var : α
   -- The expression that the variable will evaluate to.
   varExpr : Expr
-  -- An equation showing the variable is equivalent.
+  -- An equality proof showing the variable is equivalent to the
+  -- original expression.
   eq : Expr
 
+structure TheoryOps where
+  varExpr : (Var → IO Expr) → TheoryVar → IO Expr
+  predExpr : (Var → IO Expr) → TheoryPred → IO Expr
+  deriving Inhabited
+
+/-
+This defines an abstract interface used to define theory-specific
+transformations.
+
+-/
 structure SolverServices where
   -- Return the expression associated with a variable.
   varExpr {} : Var → IO Expr
@@ -138,19 +153,42 @@ structure SolverServices where
   uninterpVar {} : Expr → MetaM Var
   -- Return a variable associated with an expression that is not
   -- interpeted by the current theory.
-  exprVar {} : Expr → MetaM (ExprEvalResult Var)
+  exprVar {} : Expr → MetaM (VarDefinition Var)
   deriving Inhabited
 
 abbrev SolverM := ReaderT SolverServices MetaM
 
-def getVarForExpr (e:Expr) : SolverM (ExprEvalResult Var) := do
+def getVarForExpr (e:Expr) : SolverM (VarDefinition Var) := do
   (← read).exprVar e
 
+@[reducible]
+def TermRecognizer := Expr → SolverM (VarDefinition TheoryVar)
 
-structure TheoryOps where
-  exprVar : Expr → SolverM (ExprEvalResult TheoryVar)
-  varExpr : (Var → IO Expr) → TheoryVar → IO Expr
-  predExpr : (Var → IO Expr) → TheoryPred → IO Expr
-  deriving Inhabited
+structure TermRecognizerPair where
+  theoryRef : TheoryRef
+  function : TermRecognizer
 
-end ArithSolver
+namespace TermRecognizerPair
+
+instance : BEq TermRecognizerPair where
+  beq := fun x y => false
+
+end TermRecognizerPair
+
+-- | A rule that given a proposition, tries to produce a predicate
+-- and a function expression that transforms proofs of the original
+-- proposition into proofs of the predicate.
+structure  PredRule where
+  theoryRef : TheoryRef
+  action : Expr → SolverM (Option (TheoryPred × Expr))
+
+namespace PredRule
+
+instance : BEq PredRule where
+  beq := fun x y => false
+
+end PredRule
+
+
+
+end ClausalExtraction

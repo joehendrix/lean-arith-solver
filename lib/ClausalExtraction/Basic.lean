@@ -146,11 +146,6 @@ transformations.
 structure SolverServices where
   -- Return the expression associated with a variable.
   varExpr {} : Var → IO Expr
-  -- Return a variable that interprets the expression as a constant
-  -- even if the head function belong to a theory.
-  --
-  -- Used for `OfNat.ofNat` constants and the arithmetic theory.
-  uninterpVar {} : Expr → MetaM Var
   -- Return a variable associated with an expression that is not
   -- interpeted by the current theory.
   exprVar {} : Expr → MetaM (VarDefinition Var)

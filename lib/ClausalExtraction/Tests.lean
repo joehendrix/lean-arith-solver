@@ -25,11 +25,11 @@ theorem test_le_int_goal (x y:Int) (p:Hide (¬Int.NonNeg (-1 + -1 * y))) : x ≤
   to_poly
   exact p.value negGoal
 
-def test_eq_goal (x:Int) (p : Hide (1 * x + -1 * y = 0)) : x = y := by
+def test_eq_goal (x:Int) (p : Hide (0 + 1 * x + -1 * y = 0)) : x = y := by
   to_poly
   exact (negGoal p.value)
 
-def test_ne_goal (x:Int) (p : Hide (¬(x + -y = 0))) : x ≠ y := by
+def test_ne_goal (x:Int) (p : Hide (¬(0 + x + -y = 0))) : x ≠ y := by
   to_poly
   simp only [Int.one_mul, Int.neg_one_mul] at negGoal
   exact p.value negGoal
@@ -42,11 +42,19 @@ def test_ground_assumption (q:1 + 2 = 4): False := by
   to_poly
   contradiction
 
-/- TODO: Exlore additional test cases
-def test_not_goal (a b : Nat)
-     (p:Hide (Int.NonNeg (1 * OfNat.ofNat a + -1 * OfNat.ofNat (b + 1))))
+def test_nat_not_gt_goal (a b : Nat)
+     (p:Hide (¬ Int.NonNeg (-1 + 1 * OfNat.ofNat a + -1 * OfNat.ofNat b)))
      : ¬(a > b) := by
   to_poly
+  exact p.value negGoal
+
+def test_nat_add_gt_goal (a b c : Nat)
+     (p:Hide (¬ Int.NonNeg (0 + 1 * OfNat.ofNat c + -1 * OfNat.ofNat a + -1 * OfNat.ofNat b)))
+     : a + b > c := by
+  to_poly
+  exact p.value negGoal
+
+/- TODO: Exlore additional test cases
 
 def test_nat_gt_goal (a b : Nat) : (a > b) := by
   to_poly

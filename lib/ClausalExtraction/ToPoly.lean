@@ -15,11 +15,9 @@ namespace ClausalExtraction
 syntax (name := to_poly) "to_poly" : tactic
 
 @[tactic to_poly] def evalToPoly : Tactic := fun stx => do
+  let ctx ← Context.init
+  let ctx ← ArithTheory.addArithTheory ctx
   liftMetaTactic fun mvarId => do
-   -- let constRef ← IO.mkRef {}
-    let ctx ← Context.init
-    let ctx ← ArithTheory.addArithTheory ctx
-
     let goal ← mkGoal ctx `to_poly mvarId
     checkNotAssigned mvarId `to_poly
     let r@([goalId]) ← goal.apply

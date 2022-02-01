@@ -170,12 +170,12 @@ def processDecls (ctx:Context) (r:IO.Ref State) (lctx:LocalContext) : MetaM Unit
     if ← isDefEq (← inferType d.type) propExpr then do
       let _ ← tryAddPred ctx r (some d.fvarId) d.userName (mkFVar d.fvarId) d.type
 
+-- | This analyze the goal of the problem.
 def analyzeSatProblem (ctx:Context) (r : IO.Ref State) (tactic:Name) (goalId:MVarId) (target:Expr)
    : MetaM (Expr → Expr) := do
   -- If goal is already false, then just negate it.
   if ← isDefEq target falseExpr then
     return id
-
   -- If goal has form `Not p` then we can diretly process property.
   match ← matchNot target with
   | some prop => do

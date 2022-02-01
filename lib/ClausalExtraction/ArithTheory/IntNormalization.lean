@@ -3,6 +3,8 @@ This contains the definitions related to numeric expression
 normalization.
 -/
 import ClausalExtraction.ArithTheory.ArithM
+import ClausalExtraction.SimpRule
+import Lean
 
 open Lean
 open Lean.Meta
@@ -11,115 +13,21 @@ namespace ClausalExtraction
 
 namespace ArithTheory
 
-section Lemmas
-private
-theorem sum0Lemma (p q v:Int) : p*v + q*v = (p+q)*v := Eq.symm (Int.add_mul _ _ _)
+-- | Create an int
+def mkIntRefl (e:IntExpr) : Expr := mkApp (mkApp (mkConst ``rfl [levelOne]) intExpr) e
 
-private
-theorem sumLemma (r p q v:Int) : (r + p*v) + q*v = r + (p+q)*v := by
-  apply Eq.trans (Int.add_assoc r _ _)
-  apply congrArg (fun y => r + y)
-  exact sum0Lemma _ _ _
 
-private
-theorem cancel0Lemma {p q:Int} (h : p+q = 0) (v:Int) : p*v + q*v = 0 := by
-  apply Eq.trans (sum0Lemma p q v)
-  exact @Eq.substr Int (λx => x * v = 0) _ _ h (Int.zero_mul v)
-
-example        : (64:Int) + -64 = 0   := @cancel0Lemma (64) (-64) (@rfl Int 0) 1
-example        : (-64:Int) + 64 = 0   := @cancel0Lemma (-64) (64) (@rfl Int 0) 1
-example (v:Int): -64 * v + 64 * v = 0 := @cancel0Lemma (-64) 64   (@rfl Int 0) v
-example (v:Int): 64 * v + -64 * v = 0 := @cancel0Lemma (64) (-64) (@rfl Int 0) v
-
-private
-theorem cancelLemma (r p q v:Int) (h : p+q = 0) : (r + p*v) + q*v = r := by
-  apply Eq.trans (Int.add_assoc r _ _)
-  exact Eq.trans (cancel0Lemma h v ▸ rfl) (Int.add_zero r)
-
-private
-theorem polyProofAddContextLemma {x c a:Int} (h:x + c = a) (y:Int)
-  : (x + y) + c = a + y := by
-  simp [h.symm, Int.add_assoc, Int.add_comm y c]
-
-end Lemmas
-
--- polyProofAddContext s x c a h poly idx where h is a proof of "x + c = a" returns
--- a proof "(x + poly[idx] + poly[idx+1] + ..) + c = a + poly[idx] + poly[idx+1] + .."
-private
-def polyProofAddContext (ref:IO.Ref State) (f:Var → IO IntExpr) (x c a:IntExpr) (h:Expr) (poly:Poly) (idx:Nat) : IO Expr := do
-  let mut x := x
-  let mut a := a
-  let mut h := h
-  for p in poly.elements[idx:] do
-    let y ← scalarProd ref f p
-    h := mkAppN (mkConst ``polyProofAddContextLemma) #[x, c, a, h, y]
-    x := x + y
-    a := a + y
-  pure h
-
--- | @addProof f p m v@ returns proof showing that
--- @p.expr + firstScalarProd f (m, v) = (p.add m v).expr@.
-private
-def polyAddProof (ref:IO.Ref State) (f:Var → IO IntExpr) : ∀(poly:Poly) (q:Int), q ≠ 0 → TheoryVar → IO Expr
-| poly, q, g, v => do
-  let c ← scalarProd ref f (q,v)
-  let rec loop : ∀(i : Nat), IO Expr
-      | 0 => do
-        if poly.elements.size = 0 then
-          -- Prove (0:Int) + firstScalarProd f (q,v) = firstScalarProd f (q,v)
-          mkApp (mkConst `Int.zero_add) c
-        else
-          let x ← scalarProd ref f poly.elements[0]
-          let a := c + x
-          let h := mkAppN (mkConst `Int.add_comm) #[x, c]
-          polyProofAddContext ref f x c a h poly 1
-      | Nat.succ i => do
-        let (p,u) := poly.elements[i]
-        if u < v then
-          let x ← polyExpr ref f poly (limit := i+1)
-          let a := x + c
-          let h := mkAppN (mkConst ``Eq.refl [levelOne]) #[intExpr, a]
-          polyProofAddContext ref f x c a h poly (i+1)
-        else if v < u then
-          loop i
-        else -- v = u
-          if p+q = 0 then
-            if i = 0 then
-              let x ← scalarProd ref f poly.elements[0]
-              let a := (0 : Int)
-              let rflExpr := mkAppN (mkConst ``rfl [levelOne]) #[intExpr, intZeroExpr]
-              -- Create proof: -q*v + q*v = 0.
-              let h := mkAppN (mkConst ``cancel0Lemma) #[ (-q : Int), q, rflExpr, ← thvarExpr ref f v]
-              polyProofAddContext ref f x c a h poly (i+1)
-            else
-              let a ← polyExpr ref f poly i
-              let x := a + (← scalarProd ref f poly.elements[i])
-              let rflExpr := mkAppN (mkConst ``rfl [levelOne]) #[intExpr, intZeroExpr]
-              -- Create proof: (r + -q*v) + q*v = r.
-              let h := mkAppN (mkConst ``cancelLemma) #[a, (-q : Int), q, ← thvarExpr ref f v, rflExpr]
-              polyProofAddContext ref f x c a h poly (i+1)
-          else
-            if i = 0 then
-              let x ← scalarProd ref f poly.elements[0]
-              let a ← scalarProd ref f (p+q, v)
-              --  Create proof (p*v) + (q*v) = (p+q) * v
-              let h := mkAppN (mkConst ``sum0Lemma) #[p, q, ← thvarExpr ref f v]
-              polyProofAddContext ref f x c a h poly (i+1)
-            else
-              let r ← polyExpr ref f poly i
-              let x := r + (←scalarProd ref f poly.elements[i])
-              let a := r + (←scalarProd ref f (p+q, v))
-              let h := mkAppN (mkConst ``sumLemma) #[r, p, q, ←thvarExpr ref f v]
-              polyProofAddContext ref f x c a h poly (i+1)
-  loop poly.elements.size
+def getVarExprFn : ArithM (TheoryVar → IO IntExpr) := do
+  let svc ← (read : SolverM _)
+  let ref ← read
+  pure (thvarExpr ref svc.varExpr)
 
 -- @polyAddProof s poly q _ v@ returns a proof that
 --   @poly.expr varExpr s + firstScalarProd s.varExpr (m, v) = (poly.add m v).expr s.varExpr@.
 def getPolyAddProof (poly:Poly) (q:Int) (q_ne:q ≠ 0) (v:TheoryVar) : ArithM Expr := do
   let svc ← (read : SolverM _)
   let ref ← read
-  let f (v:Var) := IntExpr.mk <$> svc.varExpr v
-  polyAddProof ref f poly q q_ne v
+  Poly.addProof (thvarExpr ref svc.varExpr) poly q q_ne v
 
 section Normalization
 
@@ -133,21 +41,47 @@ def matchUnaryOp (f tp : Expr) (e:Expr) : MetaM (Option Expr) := do
   let d := mkApp f x
   pure $ if ← isDefEq d e then some x else none
 
-def matchIntLit (e:Expr) : MetaM (Option Int) := do
-  let x ← mkFreshExprMVar natExpr
-  let e ← whnf e
-  if ← isDefEq (mkApp (mkConst `Int.ofNat) x) e then
-    match ← whnf x with
-    | Expr.lit (Literal.natVal n) _ => return (some n)
-    | _ => pure ()
-  if ← isDefEq (mkApp (mkConst `Int.negSucc) x) e then
-    match ← whnf x with
-    | Expr.lit (Literal.natVal n) _ => return (some (-(n+1)))
-    | _ => pure ()
+def matchOfNatNatLit (e:Expr) : MetaM (Option Nat) := do
+  let acts : List (Expr → MetaM (Option Nat)) := [
+    matchrule `(@OfNat.ofNat Nat $(x) _) => do
+      match ← whnf x with
+      | Expr.lit (Literal.natVal n) _ => pure (some n)
+      | _ => pure none
+   ]
+  for act in acts do
+    match ← act e with
+    | some n =>
+       return n
+    | none => pure ()
   pure none
 
-theorem add_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + m*y = c) : a + m*(x+y) = c := by
+def matchIntLit (e:Expr) : MetaM (Option Int) := do
+  let acts := [
+    matchrule `(Int.ofNat $(x)) => do
+      match ← whnf x with
+      | Expr.lit (Literal.natVal n) _ => pure (some (n:Int))
+      | _ => pure none,
+    matchrule `(Int.negSucc $(x)) => do
+      match ← whnf x with
+      | Expr.lit (Literal.natVal n) _ => pure (some (Int.negSucc n))
+      | _ => pure none
+   ]
+  for act in acts do
+    match ← act e with
+    | some n => return n
+    | none => pure ()
+  pure none
+
+def matchOfNatofNatInt : Expr → MetaM (Option Expr) :=
+  matchrule `(@OfNat.ofNat Int $(n) _) => pure (some n)
+
+theorem int_add_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + m*y = c) : a + m*(x+y) = c := by
   rw [h.symm, g.symm, Int.mul_add, Int.add_assoc]
+
+theorem nat_add_poly_lemma {m:Int} {x y:Nat} {a b c:Int}
+    (g : a + m*OfNat.ofNat x = b) (h : b + m*OfNat.ofNat y = c) : a + m * OfNat.ofNat (x+y) = c := by
+  apply int_add_poly_lemma g h
+
 theorem sub_poly_lemma {m x y a b c:Int}  (g : a + m*x = b) (h : b + -m*y = c) : a + m*(x-y) = c := by
   rw [h.symm, g.symm]
   rw [Int.sub_to_add_neg, Int.mul_add, Int.mul_neg, Int.add_assoc]
@@ -166,7 +100,11 @@ private theorem mul_rhs_poly_lemma {m x y a b:Int} (g: a + (m*y)*x = b) : a + m*
   rw [Int.mul_assoc, Int.mul_comm y x] at g
   exact g
 
-theorem uninterpVarLemma {e v a m b:Int} (eq:e = v) (pr:a + m * v = b) : a + m * e = b := by
+theorem uninterpIntLemma {e v a m b:Int} (eq:e = v) (pr:a + m * v = b) : a + m * e = b := by
+  rw [eq]
+  exact pr
+
+theorem uninterpNatLemma {e v : Nat} {a m b:Int} (eq:e = v) (pr:a + m * OfNat.ofNat v = b) : a + m * OfNat.ofNat e = b := by
   rw [eq]
   exact pr
 
@@ -175,17 +113,74 @@ structure AddResult where
   polyExpr : Expr
   equivProof : Expr
 
--- | @appendAddExpr poly m e@ returns poly equivalent to `poly + m*e` along with proof that that
+-- | @appendAddExprFromNat poly m _ e@ returns poly equivalent to `poly + m*OfNat.ofNat e` along with
+--  proof that that poly.expr + m*e = ret.expr
+private
+partial def appendAddExprFromNat (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly) : ArithM AddResult := do
+  let varExpr ← getVarExprFn
+  let aexpr ← poly.expr varExpr
+  match ← matchOfNatNatLit e with
+  | some x => do
+    let r ←
+      if xpr : (OfNat.ofNat x : Int) = 0 then
+        let aexpr ← getPolyExpr poly
+        let pr := mkIntRefl aexpr
+        pure {
+          poly := poly
+          polyExpr := ← getPolyExpr poly
+          equivProof := pr
+        }
+      else
+        let y := m * x
+        let svc ← (read : SolverM _)
+        let pr ← Poly.addcProof varExpr poly y (Int.mul_ne_zero m_ne xpr)
+        let poly := poly.addc y
+        pure {
+          poly := poly,
+          polyExpr := ← getPolyExpr poly,
+          equivProof := pr
+        }
+    return r
+  | _ => pure ()
+
+  -- Match addition
+  let natAddConst : Expr :=
+        let f := mkConst ``HAdd.hAdd [levelZero, levelZero, levelZero]
+        let inst := mkAppN (mkConst ``instHAdd [levelZero]) #[natExpr, mkConst ``instAddNat]
+        mkAppN f #[natExpr, natExpr, natExpr, inst]
+  match ← matchBinOp natAddConst natExpr e with
+  | none => pure ()
+  | some (x, y) => do
+    let { poly := poly, polyExpr := bexpr, equivProof := x_pr }
+          ← appendAddExprFromNat m m_ne x poly
+    let { poly := poly, polyExpr := cexpr, equivProof := y_pr }
+          ← appendAddExprFromNat m m_ne y poly
+    let pr := mkAppN (mkConst ``nat_add_poly_lemma) #[m, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
+    return { poly := poly, polyExpr := ← getPolyExpr poly, equivProof := pr }
+
+
+  let ⟨v, vExpr, eq⟩ ← getVarForExpr e
+  let v ← getTheoryVar (Decl.uninterpNat v)
+  let pr ← poly.addProof varExpr m m_ne v
+  let poly := poly.add m v
+  let bexpr ← poly.expr varExpr
+  let pr := mkAppN (mkConst ``uninterpNatLemma) #[e, vExpr, aexpr, m, bexpr, eq, pr]
+  return { poly := poly, polyExpr := bexpr, equivProof := pr }
+
+-- | @appendAddExprFromInt poly m _ e@ returns poly equivalent to `poly + m*e` along with proof that that
 -- poly.expr + m*e = ret.expr
 private
 partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly) : ArithM AddResult := do
+  let e ← instantiateMVars e
+  let varExpr ← getVarExprFn
+
   match ← matchIntLit e with
   | none => pure ()
   | some x =>
     let r ←
-      if x_ne : x = 0 then
+      if xpr : x = 0 then
         let aexpr ← getPolyExpr poly
-        let pr := mkAppN (mkConst ``rfl [levelOne]) #[intExpr, aexpr]
+        let pr := mkIntRefl aexpr
         pure {
           poly := poly
           polyExpr := ← getPolyExpr poly
@@ -194,16 +189,18 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly) : A
       else
         let y := m * x
         -- pr: poly + m * x * 1 = r
-        let pr ← getPolyAddProof poly y (Int.mul_ne_zero m_ne x_ne) oneVar
-        let poly := poly.add y oneVar
-        return {
+        let svc ← (read : SolverM _)
+        let pr ← Poly.addcProof varExpr poly y (Int.mul_ne_zero m_ne xpr)
+        let poly := poly.addc y
+        pure {
           poly := poly,
           polyExpr := ← getPolyExpr poly,
           equivProof := pr
         }
     return r
+
   -- Match addition
-  let aexpr ← getPolyExpr poly
+  let aexpr ← poly.expr varExpr
   match ← matchBinOp intAddConst intExpr e with
   | none => pure ()
   | some (x, y) => do
@@ -211,7 +208,7 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly) : A
           ← appendAddExprFromInt m m_ne x poly
     let { poly := poly, polyExpr := cexpr, equivProof := y_pr }
           ← appendAddExprFromInt m m_ne y poly
-    let pr := mkAppN (mkConst ``add_poly_lemma) #[m, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
+    let pr := mkAppN (mkConst ``int_add_poly_lemma) #[m, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
     return { poly := poly, polyExpr := ← getPolyExpr poly, equivProof := pr }
 
   -- Match sub
@@ -220,7 +217,7 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly) : A
   | some (x, y) => do
     let { poly := poly, polyExpr := bexpr, equivProof := x_pr }
           ← appendAddExprFromInt m m_ne x poly
-    let bexpr ← getPolyExpr poly
+    let bexpr ← poly.expr varExpr
     let { poly := poly, polyExpr := cexpr, equivProof := y_pr }
           ← appendAddExprFromInt (- m) (Int.neg_ne_zero m_ne) y poly
     let pr := mkAppN (mkConst ``sub_poly_lemma) #[m, x, y, aexpr, bexpr, cexpr, x_pr, y_pr]
@@ -273,14 +270,17 @@ partial def appendAddExprFromInt (m:Int) (m_ne:m ≠ 0) (e:Expr) (poly:Poly) : A
           pure { poly := poly, polyExpr := bexpr, equivProof := pr }
       return r
 
-  let e ← instantiateMVars e
-  let (v, vExpr, eq) ← do
-        let r ← getVarForExpr e
-        pure (← getUninterpVar r.var, r.varExpr, r.eq)
+  match ← matchOfNatofNatInt e with
+  | none => pure ()
+  | some e => do
+    return ← appendAddExprFromNat m m_ne e poly
+
+  let ⟨v, vExpr, eq⟩ ← getVarForExpr e
+  let v ← getTheoryVar (Decl.uninterpInt v)
   let pr ← getPolyAddProof poly m m_ne v
   let poly := poly.add m v
   let bexpr ← getPolyExpr poly
-  let pr := mkAppN (mkConst ``uninterpVarLemma) #[e, vExpr, aexpr, m, bexpr, eq, pr]
+  let pr := mkAppN (mkConst ``uninterpIntLemma) #[e, vExpr, aexpr, m, bexpr, eq, pr]
   pure { poly := poly, polyExpr := bexpr, equivProof := pr }
 
 theorem purifyIntLemmaPoly {x y:Int} (p:0 + 1 * x = y) : x = y := by
@@ -415,6 +415,14 @@ def matchIntNonNeg (r:IO.Ref ArithTheory.State)  (prop : Expr) : SolverM (Option
   let pred ← getTheoryPred (Pred.IsGe0 res.var) r
   let proofFn := mkAppN (mkConst ``intNonNeg_lemma) #[mvar, ← getThvarExpr res.var r, res.eq]
   return (some (pred, proofFn))
+
+-- | Match `(Int.NonNeg e) and return proof term and property.
+def matchIntNonNeg2 (r:IO.Ref ArithTheory.State) : Expr → SolverM (Option (TheoryPred × Expr)) :=
+  matchrule `(Int.NonNeg $(mvar)) => do
+    let res ← purifyIntExpr mvar r
+    let pred ← getTheoryPred (Pred.IsGe0 res.var) r
+    let proofFn := mkAppN (mkConst ``intNonNeg_lemma) #[mvar, ← getThvarExpr res.var r, res.eq]
+    return (some (pred, proofFn))
 
 def matchIntEq0 (r:IO.Ref ArithTheory.State) (prop : Expr) : SolverM (Option (TheoryPred × Expr)) := do
   let mvar ← mkFreshExprMVar intExpr MetavarKind.natural `n

@@ -76,23 +76,29 @@ def mkTermTrans (thref:TheoryRef) (termRules:DiscrTree PredRule) (ctx:Context) (
 
 def addArithTheory (ctx:Context) : MetaM Context := do
     let ref ← IO.mkRef {}
+    -- Declare theory
     let (ctx, arithTheoryRef) := ctx.addTheory (ArithTheory.ops ref)
-    let x ← mkFreshExprMVar intExpr MetavarKind.natural `n
-    let y ← mkFreshExprMVar intExpr MetavarKind.natural `n
+    -- Add recognizers
+    let m ← mkFreshExprMVar natExpr MetavarKind.natural `m
+    let x ← mkFreshExprMVar intExpr MetavarKind.natural `x
+    let y ← mkFreshExprMVar intExpr MetavarKind.natural `y
     let e := mkAppN intAddConst #[x, y]
-    let ctx ← ctx.addRecognizer e arithTheoryRef (λe => purifyIntExpr e ref)
+    let ctx ← ctx.assocExprToTheory e arithTheoryRef (λe => purifyIntExpr e ref)
     let e := mkAppN intSubConst #[x, y]
-    let ctx ← ctx.addRecognizer e arithTheoryRef (λe => purifyIntExpr e ref)
+    let ctx ← ctx.assocExprToTheory e arithTheoryRef (λe => purifyIntExpr e ref)
     let e := mkAppN intMulConst #[x, y]
-    let ctx ← ctx.addRecognizer e arithTheoryRef (λe => purifyIntExpr e ref)
+    let ctx ← ctx.assocExprToTheory e arithTheoryRef (λe => purifyIntExpr e ref)
     let e := mkAppN intNegConst #[x]
-    let ctx ← ctx.addRecognizer e arithTheoryRef (λe => purifyIntExpr e ref)
+    let ctx ← ctx.assocExprToTheory e arithTheoryRef (λe => purifyIntExpr e ref)
+    -- Add of nat operation
+    let e := mkOfNat m
+    let ctx ← ctx.assocExprToTheory e arithTheoryRef (λe => purifyIntExpr e ref)
     -- Add fundamental recognizers
     let ctx ← ctx.addPropRecognizer (mkIntNonNegExpr x) arithTheoryRef (matchIntNonNeg ref)
     let ctx ← ctx.addPropRecognizer (mkIntEq0Expr x) arithTheoryRef (matchIntEq0 ref)
     let ctx ← ctx.addPropRecognizer (mkApp (mkConst ``Not) (mkIntEq0Expr x)) arithTheoryRef (matchNotIntEq0 ref)
     -- Add final recognizers
-    ArithTheory.transformerNames.foldlM (mkTermTrans arithTheoryRef ctx.propTheoryMap) ctx
+    (ArithTheory.transformerNames.foldlM (mkTermTrans arithTheoryRef ctx.propTheoryMap) ctx : MetaM Context)
 
 end ArithTheory
 

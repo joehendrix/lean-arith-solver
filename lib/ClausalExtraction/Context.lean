@@ -28,7 +28,7 @@ namespace Context
 def addTheory (ctx:Context) (ops:TheoryOps) : Context × TheoryRef :=
   ({ctx with theories := ctx.theories.push ops }, TheoryRef.ofNat ctx.theories.size)
 
-def addRecognizer (ctx:Context) (e:Expr) (th:TheoryRef) (recog:TermRecognizer)
+def assocExprToTheory (ctx:Context) (e:Expr) (th:TheoryRef) (recog:TermRecognizer)
     : MetaM Context := do
   let m ← ctx.termRecognizerMap.insert e ⟨th,recog⟩
   pure { ctx with termRecognizerMap := m }
@@ -37,7 +37,6 @@ def addPropRecognizer (ctx:Context) (pat:Expr) (th:TheoryRef) (action : Expr →
    : MetaM Context := do
    let m ← ctx.propTheoryMap.insert pat ⟨th, action⟩
    pure { ctx with propTheoryMap := m }
-
 
 partial def varExpr (ctx:Context) (v:Var) : IO Expr := do
   let th := ctx.theories[v.theory.toNat]
@@ -78,10 +77,6 @@ def exprVar (ctx:Context) (e:Expr) : MetaM (VarDefinition Var) := do
 partial
 def services (ctx:Context) : SolverServices := {
     varExpr := varExpr ctx,
-    uninterpVar := fun e => do
-      let th := ctx.constantTheory
-      let thv ← ConstantTheory.exprVar ctx.constantState e
-      pure <| Var.mkVar th thv
     exprVar := exprVar ctx,
   }
 

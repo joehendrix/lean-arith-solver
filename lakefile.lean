@@ -1,8 +1,8 @@
 import Lake
 open System Lake DSL
 
-package arithsolver where
+package ClausalExtraction where
   srcDir := "lib"
-  libRoots := #[`ArithSolver]
+  libRoots := #[`ClausalExtraction]
   -- specify the lib as an additional target
   --moreLinkArgs := #["-Xlinker", "--error-limit=0"]

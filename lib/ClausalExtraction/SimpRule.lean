@@ -4,31 +4,40 @@ import Lean
 open Lean
 open Lean.Meta
 
-
 section Expr
 open Lean.Expr
 open Lean.Literal
 
 variable (m:Std.HashMap FVarId Expr)
 
-private def toExprExpr  : Expr → MetaM Expr
-  | bvar n _        => mkApp (mkConst ``mkBVar) (mkNatLit n)
-  | fvar n _        =>
+private def globalToExprAux  : Nat → Expr → CoreM Expr
+  | c, bvar n _ => do
+    if n ≥ c then
+      throwError "Out of scope bound variables cannot be lifted."
+    return mkApp (mkConst ``mkBVar) (mkNatLit n)
+  | c, fvar n _        =>
     match m.find? n with
     | some e => e
-    | none => mkApp (mkConst ``mkFVar) (toExpr n)
-  | mvar n _ =>
+    | none =>
+      throwError "Free variables cannot be lifted."
+  | c, mvar n _ =>
     throwError "Meta variables cannot be lifted."
-  | sort l _        => mkApp (mkConst ``mkSort) (toExpr l)
-  | const n ls _    => mkApp2 (mkConst ``mkConst) (toExpr n) (toExpr ls)
-  | app f x _       => do return mkApp2 (mkConst ``mkApp) (← toExprExpr f) (← toExprExpr x)
-  | lam x d b c     => do return mkApp4 (mkConst ``mkLambda) (toExpr x) (toExpr c.binderInfo) (← toExprExpr d) (← toExprExpr b)
-  | forallE x d b c => do return mkApp4 (mkConst ``mkForall) (toExpr x) (toExpr c.binderInfo) (← toExprExpr d) (← toExprExpr b)
-  | letE x t v b c  => do return mkApp5 (mkConst ``mkLet) (toExpr x) (← toExprExpr t) (← toExprExpr v) (← toExprExpr b) (toExpr c.nonDepLet)
-  | lit (natVal n) _ => pure <| mkApp (mkConst ``mkNatLit) (mkNatLit n)
-  | lit (strVal s) _ => pure <| mkApp (mkConst ``mkStrLit) (mkStrLit s)
-  | mdata md e _    => do return mkApp2 (mkConst ``mkMData) (toExpr md) (← toExprExpr e)
-  | proj s i e _    => do return mkApp3 (mkConst ``mkProj) (toExpr s) (mkNatLit i) (← toExprExpr e)
+  | c, sort l _        => mkApp (mkConst ``mkSort) (toExpr l)
+  | c, const n ls _    => mkApp2 (mkConst ``mkConst) (toExpr n) (toExpr ls)
+  | c, app f x _       => do return mkApp2 (mkConst ``mkApp) (← globalToExprAux c f) (← globalToExprAux c x)
+  | c, lam x t b d     => do return mkApp4 (mkConst ``mkLambda) (toExpr x) (toExpr d.binderInfo) (← globalToExprAux c t) (← globalToExprAux (c+1) b)
+  | c, forallE x t b d => do return mkApp4 (mkConst ``mkForall) (toExpr x) (toExpr d.binderInfo) (← globalToExprAux c t) (← globalToExprAux (c+1) b)
+  | c, letE x t v b d  => do return mkApp5 (mkConst ``mkLet) (toExpr x) (← globalToExprAux c t) (← globalToExprAux c v) (← globalToExprAux (c+1) b) (toExpr d.nonDepLet)
+  | c, lit (natVal n) _ => pure <| mkApp (mkConst ``mkNatLit) (mkNatLit n)
+  | c, lit (strVal s) _ => pure <| mkApp (mkConst ``mkStrLit) (mkStrLit s)
+  | c, mdata md e _    => do return mkApp2 (mkConst ``mkMData) (toExpr md) (← globalToExprAux c e)
+  | c, proj s i e _    => do return mkApp3 (mkConst ``mkProj) (toExpr s) (mkNatLit i) (← globalToExprAux c e)
+
+/-
+Map an expression to an expression that builds it while avoiding references to
+free variables and meta variables.
+-/
+private def globalToExpr : Expr → CoreM Expr := globalToExprAux m 0
 
 end Expr
 
@@ -64,7 +73,7 @@ def bindAntiquoteVarSyntax (b:ArgBinding) (v:LocalContext × Array Expr × Array
   let lctx := lctx.mkLocalDecl fvar tpv exprType BinderInfo.default
   let fvars := fvars.push (mkFVar fvar)
   let tp ← instantiateMVars b.type
-  let types := types.push (← toExprExpr Std.HashMap.empty tp)
+  let types := types.push (← globalToExpr Std.HashMap.empty tp)
   let rhs ← `(Bind.bind (mkFreshExprMVar (some $(mkIdent tpv)))
                         (fun ($(mkIdent b.userName) : Expr) => $(rhs)))
   pure (lctx, fvars, types, rhs)
@@ -102,7 +111,7 @@ def mkRhs (s:ArgState) (patS:Syntax) (rhs:Syntax) (expType: Option Expr) : TermE
     let patFVar ← mkFreshFVarId
     let insLambda (b:ArgBinding) (e:Expr) : Expr :=
           mkLambda b.userName BinderInfo.default exprType e
-    let patValue := s.antiquotedVars.foldr insLambda (← toExprExpr (mkBoundVarMap s) pat)
+    let patValue := s.antiquotedVars.foldr insLambda (← globalToExpr (mkBoundVarMap s) pat)
     let fvars := #[mkFVar patFVar]
     let values := #[patValue]
     let (lctx, fvars, values, rhs) ← s.antiquotedVars.foldrM bindAntiquoteVarSyntax (lctx, fvars, values, rhs)
@@ -118,7 +127,7 @@ def mkRhs (s:ArgState) (patS:Syntax) (rhs:Syntax) (expType: Option Expr) : TermE
     let rhs := rhs.replaceFVars fvars values
     let rhs ← instantiateMVars rhs
     pure rhs
-  let patE ← toExprExpr (← mkMetaVarMap s) pat
+  let patE ← globalToExpr (← mkMetaVarMap s) pat
   pure (patE, rhs)
 
 end ArgState
@@ -171,7 +180,6 @@ open Lean.Parser
 @[termParser] def «matchrule» : Parser :=
   leading_parser:leadPrec "matchrule " >> termParser >> darrow >> termParser
 
-
 @[termElab «matchrule»] def elabMatchRule : Lean.Elab.Term.TermElab := λ(s:Syntax) (expType:Option Expr) => do
   match s with
   | `(matchrule $pat => $rhs) => do
@@ -181,10 +189,8 @@ open Lean.Parser
   | _ =>
     throwUnsupportedSyntax
 
-
 @[termParser] def «simprule» : Parser :=
   leading_parser:leadPrec "simprule " >> termParser >> darrow >> termParser
-
 
 @[termElab «simprule»] def elabSimpRule : Lean.Elab.Term.TermElab := λ(s:Syntax) (expType:Option Expr) => do
   match s with
@@ -198,11 +204,3 @@ open Lean.Parser
     throwUnsupportedSyntax
 
 end Parser
-
-/-
-#check matchrule `(($(x) : Int) = $(y)) => some <$> Lean.Meta.instantiateMVars x
-
-def test3 := matchrule `(($(x) : Int) = $(y)) => some <$> Lean.Meta.instantiateMVars x
-
-#print test3
--/

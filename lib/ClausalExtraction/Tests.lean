@@ -21,15 +21,15 @@ def test_uninterp_goal (p:Hide False) : Hide True := by
 --  exact p.value negGoal
 
 
-theorem test_le_int_goal (x y:Int) (p:Hide (¬Int.NonNeg (-1 + -1 * y))) : x ≤ x + y := by
+theorem test_int_le_goal (x y:Int) (p:Hide (¬Int.NonNeg (-1 + -1 * y))) : x ≤ x + y := by
   to_poly
   exact p.value negGoal
 
-def test_eq_goal (x:Int) (p : Hide (0 + 1 * x + -1 * y = 0)) : x = y := by
+def test_int_eq_goal (x y:Int) (p : Hide (0 + 1 * x + -1 * y = 0)) : x = y := by
   to_poly
   exact (negGoal p.value)
 
-def test_ne_goal (x:Int) (p : Hide (¬(0 + x + -y = 0))) : x ≠ y := by
+def test_int_ne_goal (x y:Int) (p : Hide (¬(0 + x + -y = 0))) : x ≠ y := by
   to_poly
   simp only [Int.one_mul, Int.neg_one_mul] at negGoal
   exact p.value negGoal
@@ -54,14 +54,8 @@ def test_nat_add_gt_goal (a b c : Nat)
   to_poly
   exact p.value negGoal
 
-/- TODO: Exlore additional test cases
-
-def test_nat_gt_goal (a b : Nat) : (a > b) := by
+def test_nat_eq_goal (a b : Nat)
+    (p:Hide (0 + 1 * OfNat.ofNat a + -1 * OfNat.ofNat b = 0))
+    : (a = b) := by
   to_poly
-
-def test_nat_lt_goal (a b : Nat) : (a < b) := by
-  to_poly
-
-def test_nat_eq_goal (a b : Nat) : (a = b) := by
-  to_poly
--/
+  exact negGoal p.value
